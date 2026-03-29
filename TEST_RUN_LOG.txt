@@ -1,0 +1,108 @@
+================================================================================
+  FUELFLOW MVP — END-TO-END TEST RUN
+  Date: 2026-03-29
+  Tester: +27 79 962 6597 (simulated as WhatsApp shop owner)
+================================================================================
+
+INFRASTRUCTURE
+--------------
+  API Server   : FastAPI / Uvicorn — http://localhost:8000
+  Public Tunnel: https://solid-parents-find.loca.lt
+  Database     : PostgreSQL + PostGIS (Docker)
+  Session Store: Redis (Docker)
+  WhatsApp     : Meta Cloud API — Phone Number ID 958151260724568
+
+--------------------------------------------------------------------------------
+  CONVERSATION FLOW  (5 messages, each triggering a real WhatsApp API call)
+--------------------------------------------------------------------------------
+
+[20:32:02] STEP 1 — User sends: "order"
+           State:  idle → awaiting_fuel_type
+           Action: Bot asks "What type of fuel do you need? Diesel / Petrol / Paraffin"
+           WhatsApp API: POST graph.facebook.com → 200 OK
+           Message ID:   wamid.HBgLMjc3OTk2MjY1OTcVAgARGBIzRUYyMDEyOUE0OTJCOEYyNEMA
+
+[20:32:07] STEP 2 — User sends: "Diesel"
+           State:  awaiting_fuel_type → awaiting_quantity
+           Saved:  fuel_type = diesel
+           Action: Bot asks "Got it, Diesel. How many liters? (Min 10L, Max 10,000L)"
+           WhatsApp API: POST graph.facebook.com → 200 OK
+           Message ID:   wamid.HBgLMjc3OTk2MjY1OTcVAgARGBJBNTExNDFENzlFQjY3NzE1OEIA
+
+[20:32:11] STEP 3 — User sends: "500"
+           State:  awaiting_quantity → awaiting_location
+           Saved:  quantity_liters = 500.0
+           Action: Bot asks "500 liters of diesel. Where should we deliver?"
+           WhatsApp API: POST graph.facebook.com → 200 OK
+           Message ID:   wamid.HBgLMjc3OTk2MjY1OTcVAgARGBI4ODgxNjc0MjAyQUFEN0JGQkQA
+
+[20:32:15] STEP 4 — User sends: "Sandton, Johannesburg"
+           State:  awaiting_location → awaiting_confirmation
+           Saved:  location = Sandton, Johannesburg (-26.2041, 28.0473)
+           Action: Bot sends order summary and asks to confirm
+           WhatsApp API: POST graph.facebook.com → 200 OK
+           Message ID:   wamid.HBgLMjc3OTk2MjY1OTcVAgARGBJGRkJDMDg0MDg0OERDRTNEREIA
+
+[20:32:19] STEP 5 — User sends: "Yes"
+           State:  awaiting_confirmation → order_placed → idle (reset)
+           Action: Bot confirms order placed, triggers full dispatch pipeline
+
+--------------------------------------------------------------------------------
+  DISPATCH PIPELINE  (triggered automatically on confirmation)
+--------------------------------------------------------------------------------
+
+  [1] Shop profile created
+      ID     : bef42ed5-a651-4119-abe2-8972c6476911
+      Phone  : 27799626597
+      Name   : Shop 6597
+
+  [2] Order created
+      Order # : FO-20260329-001
+      Fuel    : Diesel
+      Qty     : 500.00 L
+      Status  : pending
+
+  [3] Nearest depot found (PostGIS geospatial query)
+      Depot   : Sandton Fuel Depot
+      Distance: within 50km of delivery location
+
+  [4] Driver assigned
+      Driver  : Thabo Molefe
+      Status  : on_delivery (updated from available)
+
+  [5] Delivery assignment created
+      Assignment ID: feb5c52b-a75a-43aa-b190-8c00304de679
+
+  [6] All changes committed to database (COMMIT)
+
+  [7] Order confirmation sent to user
+      Text    : "📦 Your order number is FO-20260329-001. We'll update you when a driver is assigned."
+      WhatsApp API: POST graph.facebook.com → 200 OK
+      Message ID:   wamid.HBgLMjc3OTk2MjY1OTcVAgARGBRDQTdDNjA1NDk2QTMzQjYxNDc3QwA=
+
+--------------------------------------------------------------------------------
+  RESULT SUMMARY
+--------------------------------------------------------------------------------
+
+  Webhook verification          ✅ PASS
+  Step 1 — Order intent         ✅ PASS  (HTTP 200)
+  Step 2 — Fuel type            ✅ PASS  (HTTP 200)
+  Step 3 — Quantity             ✅ PASS  (HTTP 200)
+  Step 4 — Location             ✅ PASS  (HTTP 200)
+  Step 5 — Confirmation         ✅ PASS  (HTTP 200)
+  Shop profile auto-created     ✅ PASS
+  Order persisted to DB         ✅ PASS  (FO-20260329-001)
+  Nearest depot matched         ✅ PASS  (Sandton Fuel Depot)
+  Driver assigned               ✅ PASS  (Thabo Molefe → on_delivery)
+  WhatsApp API calls (6 total)  ✅ PASS  (all returned 200 OK with message IDs)
+
+  NOTE: WhatsApp message delivery to handset was blocked by Meta's sandbox
+  restriction — sandbox requires business account verification to whitelist
+  recipient numbers. All 6 messages were accepted and acknowledged by Meta's
+  API with valid message IDs. This is a Meta account tier limitation, not a
+  code issue. Full delivery will work once the app is moved to a production
+  phone number.
+
+================================================================================
+  END OF TEST RUN
+================================================================================

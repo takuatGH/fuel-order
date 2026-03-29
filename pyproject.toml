@@ -1,0 +1,68 @@
+[project]
+name = "fuelflow"
+version = "0.1.0"
+description = "B2B fuel logistics platform with WhatsApp ordering"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+    { name = "Takudzwa Ndhlovu" }
+]
+
+dependencies = [
+    # web framework
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.27.0",
+    
+    # database
+    "sqlalchemy[asyncio]>=2.0.25",
+    "asyncpg>=0.29.0",           # async postgres driver
+    "alembic>=1.13.0",           # migrations
+    "geoalchemy2>=0.14.0",       # postgis support
+    
+    # redis
+    "redis>=5.0.0",              # async redis client
+    
+    # http client (for whatsapp api)
+    "httpx>=0.26.0",
+    
+    # settings
+    "pydantic-settings>=2.1.0",
+    
+    # fsm
+    "transitions>=0.9.0",
+    
+    # async task queue (for dispatch)
+    "celery>=5.3.0",
+    "redis>=5.0.0",              # celery broker
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.1.0",
+    "httpx>=0.26.0",             # for testing fastapi
+    "ruff>=0.1.0",               # linting
+    "mypy>=1.8.0",               # type checking
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]  # errors, pyflakes, isort, pyupgrade
+ignore = ["E501"]               # line length (handled by formatter)
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+ignore_missing_imports = true
