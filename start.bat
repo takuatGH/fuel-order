@@ -47,12 +47,16 @@ if errorlevel 1 (
 echo [3/4] Activating conda environment...
 call conda activate fuel-order
 
-echo [4/4] Starting FastAPI server...
+echo [4/5] Starting ngrok tunnel...
+start "ngrok" %USERPROFILE%\ngrok\ngrok.exe http 8000 --url=hailey-blistery-lauren.ngrok-free.dev
+
+echo [5/5] Starting FastAPI server...
 echo.
 echo ======================================
 echo    FuelFlow is starting!
-echo    API: http://localhost:8000
-echo    Docs: http://localhost:8000/docs
+echo    API:     http://localhost:8000
+echo    Public:  https://hailey-blistery-lauren.ngrok-free.dev
+echo    Docs:    http://localhost:8000/docs
 echo ======================================
 echo.
 echo Press Ctrl+C to stop the server.
