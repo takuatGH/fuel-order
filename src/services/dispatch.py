@@ -1,9 +1,10 @@
 import logging
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import cast, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from geoalchemy2.functions import ST_Distance, ST_MakePoint, ST_SetSRID
+from geoalchemy2.functions import ST_Distance, ST_DWithin, ST_MakePoint, ST_SetSRID
+from geoalchemy2.types import Geography
 
 from src.models import Depot, Driver, DriverStatus, Order, DeliveryAssignment, AssignmentStatus
 
@@ -23,18 +24,21 @@ class DispatchService:
         fuel_type: str,
         max_distance_km: float = 50.0,
     ) -> Depot | None:
-        point = ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)
-        # 1 degree ≈ 111km at equator
-        max_distance_deg = max_distance_km / 111.0
+        point = cast(
+            ST_SetSRID(ST_MakePoint(longitude, latitude), 4326),
+            Geography(srid=4326),
+        )
+        depot_geo = cast(Depot.location, Geography(srid=4326))
+        max_distance_m = max_distance_km * 1000
 
         stmt = (
             select(Depot)
             .where(
                 Depot.is_active == True,
                 Depot.fuel_types_available.contains([fuel_type.lower()]),
-                ST_Distance(Depot.location, point) <= max_distance_deg,
+                ST_DWithin(depot_geo, point, max_distance_m),
             )
-            .order_by(ST_Distance(Depot.location, point))
+            .order_by(ST_Distance(depot_geo, point))
             .limit(1)
         )
 

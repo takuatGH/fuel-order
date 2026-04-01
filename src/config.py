@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     order_max_liters: float = 10000.0
     session_ttl_seconds: int = 3600
     
+    # --- geocoding ---
+    geocoding_cache_ttl_seconds: int = 86400
+
     # --- feature flags ---
     enable_signature_verification: bool = True
     enable_iot_endpoints: bool = False

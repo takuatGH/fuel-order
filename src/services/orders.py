@@ -25,6 +25,7 @@ class OrderService:
         quantity_liters: float,
         latitude: float,
         longitude: float,
+        delivery_address: str | None = None,
     ) -> Order:
         order_number = await self._generate_order_number()
 
@@ -34,6 +35,7 @@ class OrderService:
             fuel_type=FuelType(fuel_type.lower()),
             quantity_liters=Decimal(str(quantity_liters)),
             delivery_location=ST_SetSRID(ST_MakePoint(longitude, latitude), 4326),
+            delivery_address=delivery_address,
             status=OrderStatus.PENDING,
         )
 

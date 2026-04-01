@@ -44,6 +44,7 @@ class Order(Base):
     )
     quantity_liters: Mapped[Decimal] = mapped_column(Numeric(10, 2))
     delivery_location: Mapped[bytes] = mapped_column(Geometry("POINT", srid=4326))
+    delivery_address: Mapped[str | None] = mapped_column(Text, nullable=True)
     quoted_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     status: Mapped[OrderStatus] = mapped_column(
         Enum(OrderStatus, name="order_status", values_callable=lambda obj: [e.value for e in obj]),
