@@ -11,6 +11,7 @@ class DriverStatus(str, PyEnum):
     AVAILABLE = "available"
     ON_DELIVERY = "on_delivery"
     OFFLINE = "offline"
+    PENDING_ACCEPTANCE = "pending_acceptance"
 
 
 class Driver(Base):

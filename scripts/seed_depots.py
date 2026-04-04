@@ -5,6 +5,7 @@ import sys
 import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.dirname(__file__))
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
@@ -13,30 +14,7 @@ from geoalchemy2.functions import ST_SetSRID, ST_MakePoint
 
 from src.config import get_settings
 from src.models import Depot
-
-DEPOTS = [
-    {
-        "name": "FuelFlow Depot Sandton",
-        "phone_number": "+27110000001",
-        "lat": -26.1076,
-        "lng": 28.0567,
-        "fuel_types": ["diesel", "petrol", "paraffin"],
-    },
-    {
-        "name": "FuelFlow Depot Midrand",
-        "phone_number": "+27110000002",
-        "lat": -25.9988,
-        "lng": 28.1282,
-        "fuel_types": ["diesel", "petrol"],
-    },
-    {
-        "name": "FuelFlow Depot Soweto",
-        "phone_number": "+27110000003",
-        "lat": -26.2678,
-        "lng": 27.8585,
-        "fuel_types": ["diesel", "paraffin"],
-    },
-]
+from data.seeds import DEPOTS
 
 
 async def seed():

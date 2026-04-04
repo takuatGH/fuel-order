@@ -57,6 +57,12 @@ class Settings(BaseSettings):
     # --- geocoding ---
     geocoding_cache_ttl_seconds: int = 86400
 
+    # --- driver dispatch ---
+    driver_acceptance_timeout_seconds: int = 300
+    max_driver_reassignment_attempts: int = 3
+    delivery_proximity_threshold_m: int = 500
+    admin_whatsapp_number: str | None = None
+
     # --- feature flags ---
     enable_signature_verification: bool = True
     enable_iot_endpoints: bool = False

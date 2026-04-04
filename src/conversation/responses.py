@@ -37,6 +37,22 @@ _CONFIRM_BUTTONS = [
     {"id": "confirm_no", "title": "Cancel"},
 ]
 
+_JOB_OFFER_BUTTONS = [
+    {"id": "job_accept", "title": "Accept Job"},
+    {"id": "job_decline", "title": "Decline"},
+]
+
+_DELIVERY_OVERRIDE_BUTTONS = [
+    {"id": "delivery_override_yes", "title": "Yes, delivered"},
+    {"id": "delivery_override_no", "title": "Not yet"},
+]
+
+
+def welcome_message() -> TextMessage:
+    return TextMessage(
+        body="Welcome to *FuelFlow*! We'll get your fuel delivery sorted."
+    )
+
 
 def fuel_type_prompt() -> InteractiveButtonsMessage:
     return InteractiveButtonsMessage(
@@ -100,7 +116,7 @@ def help_message() -> TextMessage:
 
 def greeting_message() -> TextMessage:
     return TextMessage(
-        body="👋 Hi! I'm FuelFlow, your fuel delivery assistant.\n\nSend *order* to place a fuel order, or *help* for options."
+        body="Hi! I'm FuelFlow, your fuel delivery assistant.\n\nSend any message to get started, or *help* for options."
     )
 
 
@@ -122,6 +138,91 @@ def invalid_confirmation_error() -> InteractiveButtonsMessage:
         body="Please tap Confirm or Cancel:",
         buttons=_CONFIRM_BUTTONS,
     )
+
+
+def driver_job_offer(order_number: str, fuel_type: str, quantity: float, address: str) -> InteractiveButtonsMessage:
+    return InteractiveButtonsMessage(
+        body=(
+            f"*New Job: {order_number}*\n\n"
+            f"• Fuel: {fuel_type.title()}\n"
+            f"• Quantity: {quantity:.0f}L\n"
+            f"• Deliver to: {address}"
+        ),
+        buttons=_JOB_OFFER_BUTTONS,
+        footer="Offer expires in 5 minutes",
+    )
+
+
+def driver_job_confirmed(address: str) -> TextMessage:
+    return TextMessage(
+        body=f"Job confirmed! Head to:\n{address}\n\nShare your location or type *delivered* when done."
+    )
+
+
+def driver_job_declined() -> TextMessage:
+    return TextMessage(body="Noted. Thanks for letting us know.")
+
+
+def driver_offer_expired() -> TextMessage:
+    return TextMessage(body="This job offer has expired.")
+
+
+def driver_no_active_offer() -> TextMessage:
+    return TextMessage(body="No active job at the moment.")
+
+
+def driver_delivery_prompt() -> TextMessage:
+    return TextMessage(body="Share your location or type *delivered* to complete the job.")
+
+
+def driver_delivery_confirmed(order_number: str) -> TextMessage:
+    return TextMessage(body=f"Delivery confirmed for {order_number}. Great work!")
+
+
+def driver_delivery_location_warning(distance_m: float, order_number: str) -> InteractiveButtonsMessage:
+    dist_km = distance_m / 1000
+    return InteractiveButtonsMessage(
+        body=(
+            f"You appear to be *{dist_km:.1f}km* from the delivery point for {order_number}.\n\n"
+            "Has the delivery been completed?"
+        ),
+        buttons=_DELIVERY_OVERRIDE_BUTTONS,
+    )
+
+
+def shop_driver_assigned(driver_name: str, vehicle_plate: str) -> TextMessage:
+    return TextMessage(
+        body=f"Driver *{driver_name}* ({vehicle_plate}) has accepted your order and is on the way."
+    )
+
+
+def shop_no_drivers_available(order_number: str) -> TextMessage:
+    return TextMessage(
+        body=f"Sorry, no drivers are available for order {order_number} right now. We'll retry shortly."
+    )
+
+
+def shop_order_delivered(order_number: str) -> TextMessage:
+    return TextMessage(body=f"Your order *{order_number}* has been delivered.")
+
+
+def admin_order_completed(
+    order_number: str,
+    fuel_type: str,
+    quantity: float,
+    shop_phone: str,
+    driver_name: str,
+    vehicle_plate: str,
+    address: str,
+) -> TextMessage:
+    return TextMessage(body=(
+        f"Order Completed\n"
+        f"Order: {order_number}\n"
+        f"Fuel: {quantity:.0f}L {fuel_type}\n"
+        f"Shop: {shop_phone}\n"
+        f"Driver: {driver_name} ({vehicle_plate})\n"
+        f"Address: {address}"
+    ))
 
 
 def reprompt(state: str) -> OutboundMessage:

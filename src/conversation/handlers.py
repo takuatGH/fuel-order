@@ -56,7 +56,7 @@ class MessageHandler:
 
         elif parsed.intent == "unknown":
             if flow.state == OrderState.IDLE.value:
-                collected_messages.append(responses.greeting_message())
+                flow.process_input(None, "start_order")
             else:
                 collected_messages.append(responses.reprompt(flow.state))
 

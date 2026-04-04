@@ -59,6 +59,10 @@ class IntentParser:
     HELP_TRIGGERS = {
         "help", "?", "what", "how", "menu", "options", "commands"
     }
+
+    DELIVERY_TRIGGERS = {
+        "delivered", "done", "complete", "delivery done", "delivery complete"
+    }
     
     # regex for quantity extraction (e.g., "200", "200L", "200 liters")
     QUANTITY_PATTERN = re.compile(
@@ -132,23 +136,15 @@ class IntentParser:
             return self._parse_confirmation(text_lower)
         
         elif current_state == OrderState.ORDER_PLACED.value:
-            # after order placed, any message could start new order
             return self._parse_idle(text_lower)
-        
+
+        elif current_state == "on_delivery":
+            return self._parse_delivery_confirmation(text_lower)
+
         return ParsedIntent(intent="unknown")
     
     def _parse_idle(self, text: str) -> ParsedIntent:
-        """parse message when user is in idle state."""
-        # check for order intent
-        if self._matches_any(text, self.ORDER_TRIGGERS):
-            return ParsedIntent(intent="start_order")
-        
-        # check if they directly said a fuel type (shortcut)
-        for fuel in self.FUEL_TYPES:
-            if fuel in text:
-                return ParsedIntent(intent="start_order")
-        
-        return ParsedIntent(intent="unknown")
+        return ParsedIntent(intent="start_order")
     
     def _parse_fuel_type(self, text: str) -> ParsedIntent:
         """parse fuel type selection."""
@@ -175,6 +171,11 @@ class IntentParser:
         
         return ParsedIntent(intent="invalid_quantity")
     
+    def _parse_delivery_confirmation(self, text: str) -> ParsedIntent:
+        if self._matches_any(text, self.DELIVERY_TRIGGERS):
+            return ParsedIntent(intent="delivery_confirmed")
+        return ParsedIntent(intent="unknown")
+
     def _parse_location_text(self, text: str) -> ParsedIntent:
         """parse text-based location (address)."""
         # for mvp, accept any non-empty text as location
@@ -200,13 +201,16 @@ class IntentParser:
         lng = location.get("longitude")
         
         if lat is not None and lng is not None:
-            # if we're waiting for location, this is perfect
             if current_state == OrderState.AWAITING_LOCATION.value:
                 return ParsedIntent(
                     intent="location_provided",
                     value={"latitude": lat, "longitude": lng}
                 )
-            # if idle or just placed order, could be starting new order with location
+            elif current_state == "on_delivery":
+                return ParsedIntent(
+                    intent="location_provided",
+                    value={"latitude": lat, "longitude": lng}
+                )
             elif current_state in (OrderState.IDLE.value, OrderState.ORDER_PLACED.value):
                 return ParsedIntent(intent="start_order")
         
@@ -247,7 +251,17 @@ class IntentParser:
         # order start
         if button_id in ("start_order", "order", "new_order"):
             return ParsedIntent(intent="start_order")
-        
+
+        if button_id == "job_accept":
+            return ParsedIntent(intent="accept_job")
+        if button_id == "job_decline":
+            return ParsedIntent(intent="decline_job")
+
+        if button_id == "delivery_override_yes":
+            return ParsedIntent(intent="delivery_confirmed")
+        if button_id == "delivery_override_no":
+            return ParsedIntent(intent="delivery_override_cancel")
+
         return ParsedIntent(intent="unknown")
     
     def _matches_any(self, text: str, keywords: set) -> bool:

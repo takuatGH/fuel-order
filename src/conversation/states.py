@@ -190,6 +190,7 @@ class OrderFlow:
 
     def on_awaiting_fuel_type(self):
         from . import responses
+        self._send_message(responses.welcome_message())
         self._send_message(responses.fuel_type_prompt())
 
     def on_awaiting_quantity(self):

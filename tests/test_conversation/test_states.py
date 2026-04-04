@@ -63,7 +63,7 @@ def test_full_order_flow():
     assert f.process_input(None, "confirm_order")
     assert f.state == OrderState.ORDER_PLACED.value
 
-    assert len(msgs) == 5
+    assert len(msgs) == 6  # welcome + fuel prompt + quantity + location + confirmation + order placed
 
 
 def test_on_order_placed_appends_pending_event():
@@ -224,11 +224,12 @@ def test_no_message_sent_when_callback_not_set():
 def test_message_sent_on_every_state_transition():
     f, msgs = make_flow()
     f.process_input(None, "start_order")
-    assert len(msgs) == 1
-    assert isinstance(msgs[0], InteractiveButtonsMessage)
+    assert len(msgs) == 2  # welcome TextMessage + fuel type InteractiveButtonsMessage
+    assert isinstance(msgs[0], TextMessage)
+    assert isinstance(msgs[1], InteractiveButtonsMessage)
     f.process_input("diesel", "fuel_selected")
-    assert len(msgs) == 2
-    assert isinstance(msgs[1], TextMessage)
+    assert len(msgs) == 3
+    assert isinstance(msgs[2], TextMessage)
 
 
 def test_no_message_on_failed_transition():

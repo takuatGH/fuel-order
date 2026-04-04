@@ -8,8 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import redis.asyncio as redis
 
 from src.config import get_settings
-from src.conversation import MessageHandler, HandlerResult
+from src.conversation import MessageHandler, HandlerResult, DriverMessageHandler
 from src.conversation.responses import OutboundMessage
+from src.conversation import responses
 from src.database import get_session
 from src.services import WhatsAppClient, IdentityService, OrderService, DispatchService
 
@@ -80,8 +81,15 @@ async def receive_message(
     message = message_data["message"]
     logger.info(f"received message from {phone_number}: {message.get('type')}")
 
-    handler = MessageHandler(redis_client)
-    result = await handler.handle(phone_number=phone_number, message=message)
+    identity_service = IdentityService(session)
+    driver = await identity_service.get_driver_by_phone(phone_number)
+
+    if driver:
+        handler = DriverMessageHandler(redis_client, session, whatsapp)
+        result = await handler.handle(driver=driver, message=message)
+    else:
+        handler = MessageHandler(redis_client)
+        result = await handler.handle(phone_number=phone_number, message=message)
 
     for msg in result.messages:
         await _send_outbound(whatsapp, phone_number, msg)
@@ -91,11 +99,13 @@ async def receive_message(
             session=session,
             phone_number=phone_number,
             draft=result.order_draft,
+            redis_client=redis_client,
+            whatsapp=whatsapp,
         )
         logger.info(f"order {order_number} persisted for {phone_number}")
         await whatsapp.send_text_message(
             to=phone_number,
-            text=f"📦 Your order number is *{order_number}*\nWe'll update you when a driver is assigned."
+            text=f"Your order number is *{order_number}*. We'll notify you when a driver accepts."
         )
 
     return {"status": "ok"}
@@ -116,7 +126,18 @@ async def _send_outbound(whatsapp: WhatsAppClient, to: str, msg: OutboundMessage
         await whatsapp.send_location_request(to=to, body_text=msg.body)
 
 
-async def _persist_order(session: AsyncSession, phone_number: str, draft: dict) -> str:
+async def _persist_order(
+    session: AsyncSession,
+    phone_number: str,
+    draft: dict,
+    redis_client: redis.Redis,
+    whatsapp: WhatsAppClient,
+) -> str:
+    from src.conversation.driver_handlers import _send_offer
+
+    lat = draft.get("latitude", -26.2041)
+    lng = draft.get("longitude", 28.0473)
+
     identity_service = IdentityService(session)
     shop = await identity_service.get_or_create_shop(phone_number)
 
@@ -125,17 +146,52 @@ async def _persist_order(session: AsyncSession, phone_number: str, draft: dict) 
         shop_id=shop.id,
         fuel_type=draft["fuel_type"],
         quantity_liters=draft["quantity_liters"],
-        latitude=draft.get("latitude", -26.2041),
-        longitude=draft.get("longitude", 28.0473),
+        latitude=lat,
+        longitude=lng,
         delivery_address=draft.get("delivery_address"),
     )
 
     dispatch_service = DispatchService(session)
-    await dispatch_service.dispatch_order(
-        order=order,
-        latitude=draft.get("latitude", -26.2041),
-        longitude=draft.get("longitude", 28.0473),
+    depot = await dispatch_service.find_nearest_depot(
+        latitude=lat,
+        longitude=lng,
+        fuel_type=draft["fuel_type"],
     )
+
+    if not depot:
+        await whatsapp.send_text_message(
+            to=phone_number,
+            text="Sorry, no depot is available in your area for this fuel type.",
+        )
+        await session.commit()
+        return order.order_number
+
+    await order_service.assign_depot(order.id, depot.id)
+
+    driver = await dispatch_service.find_available_driver(depot.id)
+    if driver:
+        await _send_offer(
+            redis_client=redis_client,
+            whatsapp=whatsapp,
+            session=session,
+            driver=driver,
+            offer_data={
+                "order_id": str(order.id),
+                "order_number": order.order_number,
+                "shop_phone": phone_number,
+                "fuel_type": draft["fuel_type"],
+                "quantity_liters": str(draft["quantity_liters"]),
+                "delivery_address": draft.get("delivery_address", ""),
+                "delivery_lat": str(lat),
+                "delivery_lng": str(lng),
+                "depot_id": str(depot.id),
+            },
+        )
+    else:
+        await whatsapp.send_text_message(
+            to=phone_number,
+            text=responses.shop_no_drivers_available(order.order_number).body,
+        )
 
     await session.commit()
     return order.order_number

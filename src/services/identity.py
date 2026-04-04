@@ -9,7 +9,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.models import ShopProfile, VerificationStatus
+from src.models import ShopProfile, VerificationStatus, Driver
 
 
 logger = logging.getLogger(__name__)
@@ -69,6 +69,11 @@ class IdentityService:
         logger.info(f"created new shop profile: {shop.id}")
         return shop
     
+    async def get_driver_by_phone(self, phone_number: str) -> Driver | None:
+        stmt = select(Driver).where(Driver.phone_number == phone_number)
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def update_shop(
         self,
         shop_id: UUID,
