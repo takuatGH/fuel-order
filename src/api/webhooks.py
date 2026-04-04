@@ -4,6 +4,7 @@ import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Request, HTTPException, Depends, Query, Header
+from fastapi.responses import PlainTextResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 import redis.asyncio as redis
 
@@ -13,6 +14,7 @@ from src.conversation.responses import OutboundMessage
 from src.conversation import responses
 from src.database import get_session
 from src.services import WhatsAppClient, IdentityService, OrderService, DispatchService
+from src.services.whatsapp import WhatsAppError
 
 
 logger = logging.getLogger(__name__)
@@ -45,7 +47,7 @@ async def verify_webhook(
     settings = get_settings()
     if hub_mode == "subscribe" and hub_verify_token == settings.whatsapp_verify_token:
         logger.info("webhook verified successfully")
-        return int(hub_challenge)
+        return PlainTextResponse(content=hub_challenge)
     logger.warning(f"webhook verification failed: mode={hub_mode}")
     raise HTTPException(status_code=403, detail="verification failed")
 
@@ -83,47 +85,56 @@ async def receive_message(
 
     identity_service = IdentityService(session)
     driver = await identity_service.get_driver_by_phone(phone_number)
+    logger.info(f"driver lookup for {phone_number}: {'found' if driver else 'not found'}")
 
     if driver:
         handler = DriverMessageHandler(redis_client, session, whatsapp)
         result = await handler.handle(driver=driver, message=message)
+        await session.commit()
     else:
         handler = MessageHandler(redis_client)
         result = await handler.handle(phone_number=phone_number, message=message)
+    logger.info(f"handler result: {len(result.messages)} messages, intents processed")
 
     for msg in result.messages:
         await _send_outbound(whatsapp, phone_number, msg)
 
     if result.order_created and result.order_draft:
-        order_number = await _persist_order(
+        order_number, driver_dispatched = await _persist_order(
             session=session,
             phone_number=phone_number,
             draft=result.order_draft,
             redis_client=redis_client,
             whatsapp=whatsapp,
         )
-        logger.info(f"order {order_number} persisted for {phone_number}")
-        await whatsapp.send_text_message(
-            to=phone_number,
-            text=f"Your order number is *{order_number}*. We'll notify you when a driver accepts."
-        )
+        logger.info(f"order {order_number} persisted for {phone_number}, driver dispatched: {driver_dispatched}")
+        try:
+            await whatsapp.send_text_message(
+                to=phone_number,
+                text=responses.order_placed_message(order_number).body,
+            )
+        except WhatsAppError as e:
+            logger.error(f"failed to send order number to {phone_number}: {e.status_code} {e.error_data}")
 
     return {"status": "ok"}
 
 
 async def _send_outbound(whatsapp: WhatsAppClient, to: str, msg: OutboundMessage):
-    if msg.kind == "text":
-        await whatsapp.send_text_message(to=to, text=msg.body)
-    elif msg.kind == "buttons":
-        await whatsapp.send_interactive_buttons(
-            to=to,
-            body_text=msg.body,
-            buttons=msg.buttons,
-            header_text=msg.header,
-            footer_text=msg.footer,
-        )
-    elif msg.kind == "location_request":
-        await whatsapp.send_location_request(to=to, body_text=msg.body)
+    try:
+        if msg.kind == "text":
+            await whatsapp.send_text_message(to=to, text=msg.body)
+        elif msg.kind == "buttons":
+            await whatsapp.send_interactive_buttons(
+                to=to,
+                body_text=msg.body,
+                buttons=msg.buttons,
+                header_text=msg.header,
+                footer_text=msg.footer,
+            )
+        elif msg.kind == "location_request":
+            await whatsapp.send_location_request(to=to, body_text=msg.body)
+    except WhatsAppError as e:
+        logger.error(f"failed to send outbound message to {to}: {e.status_code} {e.error_data}")
 
 
 async def _persist_order(
@@ -132,7 +143,7 @@ async def _persist_order(
     draft: dict,
     redis_client: redis.Redis,
     whatsapp: WhatsAppClient,
-) -> str:
+) -> tuple[str, bool]:
     from src.conversation.driver_handlers import _send_offer
 
     lat = draft.get("latitude", -26.2041)
@@ -164,37 +175,37 @@ async def _persist_order(
             text="Sorry, no depot is available in your area for this fuel type.",
         )
         await session.commit()
-        return order.order_number
+        return order.order_number, False
 
     await order_service.assign_depot(order.id, depot.id)
 
-    driver = await dispatch_service.find_available_driver(depot.id)
-    if driver:
-        await _send_offer(
+    offer_data = {
+        "order_id": str(order.id),
+        "order_number": order.order_number,
+        "shop_phone": phone_number,
+        "fuel_type": draft["fuel_type"],
+        "quantity_liters": str(draft["quantity_liters"]),
+        "delivery_address": draft.get("delivery_address", ""),
+        "delivery_lat": str(lat),
+        "delivery_lng": str(lng),
+        "depot_id": str(depot.id),
+    }
+
+    sent = False
+    drivers = await dispatch_service.find_available_drivers(depot.id)
+    for driver in drivers:
+        sent = await _send_offer(
             redis_client=redis_client,
             whatsapp=whatsapp,
             session=session,
             driver=driver,
-            offer_data={
-                "order_id": str(order.id),
-                "order_number": order.order_number,
-                "shop_phone": phone_number,
-                "fuel_type": draft["fuel_type"],
-                "quantity_liters": str(draft["quantity_liters"]),
-                "delivery_address": draft.get("delivery_address", ""),
-                "delivery_lat": str(lat),
-                "delivery_lng": str(lng),
-                "depot_id": str(depot.id),
-            },
+            offer_data=offer_data,
         )
-    else:
-        await whatsapp.send_text_message(
-            to=phone_number,
-            text=responses.shop_no_drivers_available(order.order_number).body,
-        )
+        if sent:
+            break
 
     await session.commit()
-    return order.order_number
+    return order.order_number, sent
 
 
 def _verify_signature(body: bytes, signature_header: str | None, secret: str) -> bool:

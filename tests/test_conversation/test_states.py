@@ -63,7 +63,7 @@ def test_full_order_flow():
     assert f.process_input(None, "confirm_order")
     assert f.state == OrderState.ORDER_PLACED.value
 
-    assert len(msgs) == 6  # welcome + fuel prompt + quantity + location + confirmation + order placed
+    assert len(msgs) == 5  # welcome + fuel prompt + quantity + location + confirmation (order placed sent by webhook)
 
 
 def test_on_order_placed_appends_pending_event():

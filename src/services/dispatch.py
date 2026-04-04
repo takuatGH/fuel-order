@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from geoalchemy2.functions import ST_Distance, ST_DWithin, ST_MakePoint, ST_SetSRID
 from geoalchemy2.types import Geography
 
-from src.models import Depot, Driver, DriverStatus, Order, DeliveryAssignment, AssignmentStatus
+from src.models import Depot, Driver, DriverStatus, Order, OrderStatus, DeliveryAssignment, AssignmentStatus
 
 
 logger = logging.getLogger(__name__)
@@ -60,6 +60,27 @@ class DispatchService:
         )
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def find_pending_order_for_depot(self, depot_id: UUID) -> Order | None:
+        """Return the oldest unassigned confirmed order at this depot."""
+        stmt = (
+            select(Order)
+            .where(Order.depot_id == depot_id, Order.status == OrderStatus.CONFIRMED)
+            .order_by(Order.created_at)
+            .limit(1)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def find_available_drivers(self, depot_id: UUID) -> list[Driver]:
+        """Return all available drivers at a depot, ordered by id for determinism."""
+        stmt = (
+            select(Driver)
+            .where(Driver.depot_id == depot_id, Driver.status == DriverStatus.AVAILABLE)
+            .order_by(Driver.id)
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
 
     async def assign_driver(self, order_id: UUID, driver_id: UUID) -> DeliveryAssignment:
         stmt = select(Driver).where(Driver.id == driver_id)

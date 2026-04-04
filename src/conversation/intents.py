@@ -63,6 +63,10 @@ class IntentParser:
     DELIVERY_TRIGGERS = {
         "delivered", "done", "complete", "delivery done", "delivery complete"
     }
+
+    AVAILABILITY_TRIGGERS = {"available", "online", "ready"}
+
+    OFFLINE_TRIGGERS = {"offline", "break", "offduty"}
     
     # regex for quantity extraction (e.g., "200", "200L", "200 liters")
     QUANTITY_PATTERN = re.compile(
@@ -109,14 +113,21 @@ class IntentParser:
         
         # --- global intents (work in any state) ---
         
+        # help always works
+        if self._matches_any(text_lower, self.HELP_TRIGGERS):
+            return ParsedIntent(intent="help")
+        
+        # availability triggers (global, take precedence over state-specific)
+        if self._matches_any(text_lower, self.AVAILABILITY_TRIGGERS):
+            return ParsedIntent(intent="mark_available")
+        
+        if self._matches_any(text_lower, self.OFFLINE_TRIGGERS):
+            return ParsedIntent(intent="mark_offline")
+        
         # cancel always works (except in idle or order_placed)
         if self._matches_any(text_lower, self.CANCEL_TRIGGERS):
             if current_state not in (OrderState.IDLE.value, OrderState.ORDER_PLACED.value):
                 return ParsedIntent(intent="cancel")
-        
-        # help always works
-        if self._matches_any(text_lower, self.HELP_TRIGGERS):
-            return ParsedIntent(intent="help")
         
         # --- state-specific parsing ---
         

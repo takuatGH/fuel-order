@@ -26,6 +26,12 @@ DEPOTS = [
 # phone_number must be the full international format without '+' (WhatsApp sends it this way).
 DRIVERS = [
     {
+        "name": "Test Driver",
+        "phone_number": "27791885824",
+        "vehicle_plate": "TEST 001",
+        "depot": "FuelFlow Depot Sandton",
+    },
+    {
         "name": "Sipho Nkosi",
         "phone_number": "27711000001",
         "vehicle_plate": "GP 12 AB",

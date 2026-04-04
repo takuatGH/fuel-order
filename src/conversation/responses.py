@@ -85,12 +85,12 @@ def confirmation_prompt(fuel_type: str, quantity: float, address: str) -> Intera
     )
 
 
-def order_placed_message() -> TextMessage:
+def order_placed_message(order_number: str) -> TextMessage:
     return TextMessage(
         body=(
-            "✅ *Order Placed!*\n\n"
-            "We're finding the nearest depot to fulfill your order. "
-            "You'll receive updates on delivery status."
+            f"✅ *Order Placed!*\n"
+            f"Order number: *{order_number}*\n\n"
+            "We're finding a driver. You'll be notified when one accepts."
         )
     )
 
@@ -122,7 +122,7 @@ def greeting_message() -> TextMessage:
 
 def invalid_fuel_type_error() -> InteractiveButtonsMessage:
     return InteractiveButtonsMessage(
-        body="Sorry, please choose a fuel type:",
+        body="What type of fuel do you need?",
         buttons=_FUEL_BUTTONS,
     )
 
@@ -177,6 +177,59 @@ def driver_delivery_prompt() -> TextMessage:
 
 def driver_delivery_confirmed(order_number: str) -> TextMessage:
     return TextMessage(body=f"Delivery confirmed for {order_number}. Great work!")
+
+
+def driver_now_available() -> TextMessage:
+    return TextMessage(
+        body="✅ You're now marked as *available*. You'll receive job offers when orders come in."
+    )
+
+
+def driver_already_available() -> TextMessage:
+    return TextMessage(
+        body="You're already marked as available. Waiting for job offers!"
+    )
+
+
+def driver_now_offline() -> TextMessage:
+    return TextMessage(
+        body="✅ You're now *offline*. You won't receive job offers until you mark yourself available again."
+    )
+
+
+def driver_already_offline() -> TextMessage:
+    return TextMessage(
+        body="You're already offline. Send *available* when you're ready for jobs."
+    )
+
+
+def driver_cannot_change_status_on_delivery() -> TextMessage:
+    return TextMessage(
+        body="❌ You can't change your status while on a delivery. Complete your current job first."
+    )
+
+
+def driver_cannot_change_status_pending() -> TextMessage:
+    return TextMessage(
+        body="❌ You have a pending job offer. Please accept or decline it first."
+    )
+
+
+def driver_help_message() -> TextMessage:
+    return TextMessage(
+        body=(
+            "*Driver Commands*\n\n"
+            "Mark yourself available:\n"
+            "• *available*\n"
+            "• *online*\n"
+            "• *ready*\n\n"
+            "Go offline:\n"
+            "• *offline*\n"
+            "• *break*\n\n"
+            "During delivery:\n"
+            "• Share location or type *delivered*"
+        )
+    )
 
 
 def driver_delivery_location_warning(distance_m: float, order_number: str) -> InteractiveButtonsMessage:

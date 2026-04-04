@@ -43,7 +43,7 @@ def test_confirmation_prompt_is_buttons():
 
 
 def test_order_placed_message_is_text():
-    assert isinstance(order_placed_message(), TextMessage)
+    assert isinstance(order_placed_message("FO-20260404-001"), TextMessage)
 
 
 def test_cancelled_message_is_text():
@@ -123,7 +123,7 @@ def test_max_3_buttons(msg):
     (fuel_type_prompt, ()),
     (quantity_prompt, ("diesel",)),
     (location_prompt, (200.0, "diesel")),
-    (order_placed_message, ()),
+    (order_placed_message, ("FO-20260404-001",)),
     (cancelled_message, ()),
     (help_message, ()),
     (greeting_message, ()),

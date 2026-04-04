@@ -13,8 +13,6 @@ environment variables are loaded with these priorities:
 2. .env file in project root
 3. default values defined here
 """
-from functools import lru_cache
-
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -68,7 +66,6 @@ class Settings(BaseSettings):
     enable_iot_endpoints: bool = False
 
 
-@lru_cache
 def get_settings() -> Settings:
-    """get cached settings instance."""
+    """load settings fresh from .env each call so token updates take effect without restart."""
     return Settings()

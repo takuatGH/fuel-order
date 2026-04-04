@@ -141,7 +141,7 @@ async def test_unknown_message_with_active_offer_reprompts():
     driver = make_driver()
     offer = fresh_offer()
     handler, *_ = make_handler({f"driver_offer:{driver.phone_number}": offer})
-    result = await handler.handle(driver, txt_msg("what time is it"))
+    result = await handler.handle(driver, txt_msg("gotta go"))
     assert isinstance(result.messages[0], InteractiveButtonsMessage)
     ids = {b["id"] for b in result.messages[0].buttons}
     assert "job_accept" in ids
@@ -196,8 +196,8 @@ async def test_decline_job_releases_driver_and_deletes_offer():
     handler, redis_mock, session_mock, whatsapp_mock = make_handler(
         {f"driver_offer:{driver.phone_number}": offer}
     )
-    # patch _find_next_driver to return None (no more drivers)
-    with patch("src.conversation.driver_handlers._find_next_driver", new=AsyncMock(return_value=None)):
+    # patch _find_next_drivers to return empty list (no more drivers)
+    with patch("src.conversation.driver_handlers._find_next_drivers", new=AsyncMock(return_value=[])):
         result = await handler.handle(driver, btn_msg("job_decline"))
 
     assert isinstance(result.messages[0], TextMessage)
@@ -211,7 +211,7 @@ async def test_decline_notifies_shop_when_no_next_driver():
     handler, _, _, whatsapp_mock = make_handler(
         {f"driver_offer:{driver.phone_number}": offer}
     )
-    with patch("src.conversation.driver_handlers._find_next_driver", new=AsyncMock(return_value=None)):
+    with patch("src.conversation.driver_handlers._find_next_drivers", new=AsyncMock(return_value=[])):
         await handler.handle(driver, btn_msg("job_decline"))
 
     whatsapp_mock.send_text_message.assert_awaited_once()
@@ -226,7 +226,7 @@ async def test_decline_sends_offer_to_next_driver_when_available():
     handler, redis_mock, session_mock, whatsapp_mock = make_handler(
         {f"driver_offer:{driver.phone_number}": offer}
     )
-    with patch("src.conversation.driver_handlers._find_next_driver", new=AsyncMock(return_value=next_driver)), \
+    with patch("src.conversation.driver_handlers._find_next_drivers", new=AsyncMock(return_value=[next_driver])), \
          patch("src.conversation.driver_handlers._send_offer", new=AsyncMock()) as mock_send:
         await handler.handle(driver, btn_msg("job_decline"))
 

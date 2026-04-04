@@ -212,8 +212,6 @@ class OrderFlow:
         ))
 
     def on_order_placed(self):
-        from . import responses
-        self._send_message(responses.order_placed_message())
         self.pending_events.append({"type": "order_created", "draft": self.draft.to_dict()})
 
     def on_cancelled(self):

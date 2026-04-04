@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 DRIVER_OFFER_TTL = 300
 DRIVER_DELIVERY_TTL = 28800
+DRIVER_WINDOW_TTL = 86400  # 24 hours in seconds
 DELIVERY_PROXIMITY_THRESHOLD_M = 500
 
 
@@ -31,14 +32,38 @@ class DriverMessageHandler:
         self.parser = IntentParser()
 
     async def handle(self, driver: Driver, message: dict) -> HandlerResult:
+        # Track messaging window at the start
+        await self._track_messaging_window(driver.phone_number)
+
+        # Determine current state for intent parsing
         offer = await self._load_key(f"driver_offer:{driver.phone_number}")
+        delivery = await self._load_key(f"driver_delivery:{driver.phone_number}")
+
+        if offer:
+            current_state = "pending_acceptance"
+        elif delivery:
+            current_state = "on_delivery"
+        else:
+            current_state = "idle"
+
+        # Parse message to get intent
+        parsed = self.parser.parse(message, current_state=current_state)
+
+        # Route availability intents (can be handled in any state)
+        if parsed.intent in ("mark_available", "mark_offline"):
+            return await self._handle_availability(driver, parsed.intent)
+
+        # Route help intent
+        if parsed.intent == "help":
+            return HandlerResult(messages=[responses.driver_help_message()])
+
+        # Existing flow for job offers
         if offer:
             if _is_timed_out(offer):
                 await _set_driver_status(self.session, driver.id, DriverStatus.AVAILABLE)
                 await self.redis.delete(f"driver_offer:{driver.phone_number}")
                 return HandlerResult(messages=[responses.driver_offer_expired()])
 
-            parsed = self.parser.parse(message, current_state="pending_acceptance")
             if parsed.intent == "accept_job":
                 return await self._accept(driver, offer)
             elif parsed.intent == "decline_job":
@@ -51,7 +76,7 @@ class DriverMessageHandler:
                     offer.get("delivery_address") or offer["order_number"],
                 )])
 
-        delivery = await self._load_key(f"driver_delivery:{driver.phone_number}")
+        # Existing flow for deliveries
         if delivery:
             return await self._handle_delivery(driver, message, delivery)
 
@@ -95,11 +120,12 @@ class DriverMessageHandler:
         settings = get_settings()
 
         if attempt < settings.max_driver_reassignment_attempts:
-            next_driver = await _find_next_driver(self.session, depot_id, driver.id)
-            if next_driver:
-                await _send_offer(self.redis, self.whatsapp, self.session, next_driver, offer, attempt + 1)
-                await self.session.commit()
-                return HandlerResult(messages=[responses.driver_job_declined()])
+            next_drivers = await _find_next_drivers(self.session, depot_id, driver.id)
+            for next_driver in next_drivers:
+                sent = await _send_offer(self.redis, self.whatsapp, self.session, next_driver, offer, attempt + 1)
+                if sent:
+                    await self.session.commit()
+                    return HandlerResult(messages=[responses.driver_job_declined()])
 
         await self.whatsapp.send_text_message(
             to=shop_phone,
@@ -165,6 +191,66 @@ class DriverMessageHandler:
         await self.session.commit()
         return HandlerResult(messages=[responses.driver_delivery_confirmed(order_number)])
 
+    async def _handle_availability(self, driver: Driver, intent: str) -> HandlerResult:
+        from src.services import DispatchService
+        from src.models import ShopProfile
+        from sqlalchemy import func, text
+
+        if driver.status == DriverStatus.ON_DELIVERY:
+            return HandlerResult(messages=[responses.driver_cannot_change_status_on_delivery()])
+
+        if driver.status == DriverStatus.PENDING_ACCEPTANCE:
+            return HandlerResult(messages=[responses.driver_cannot_change_status_pending()])
+
+        if intent == "mark_offline":
+            if driver.status == DriverStatus.OFFLINE:
+                return HandlerResult(messages=[responses.driver_already_offline()])
+            await _set_driver_status(self.session, driver.id, DriverStatus.OFFLINE)
+            return HandlerResult(messages=[responses.driver_now_offline()])
+
+        # mark_available
+        was_offline = driver.status != DriverStatus.AVAILABLE
+        if was_offline:
+            await _set_driver_status(self.session, driver.id, DriverStatus.AVAILABLE)
+
+        # Check for waiting orders at this driver's depot
+        dispatch = DispatchService(self.session)
+        pending_order = await dispatch.find_pending_order_for_depot(driver.depot_id)
+        if pending_order:
+            shop_result = await self.session.execute(
+                select(ShopProfile).where(ShopProfile.id == pending_order.shop_id)
+            )
+            shop = shop_result.scalar_one_or_none()
+            shop_phone = shop.phone_number if shop else ""
+
+            # Extract lat/lng from PostGIS geometry
+            coords_result = await self.session.execute(
+                text("SELECT ST_Y(delivery_location::geometry), ST_X(delivery_location::geometry) FROM orders WHERE id = :oid"),
+                {"oid": pending_order.id},
+            )
+            row = coords_result.fetchone()
+            lat, lng = (row[0], row[1]) if row else (0.0, 0.0)
+
+            offer_data = {
+                "order_id": str(pending_order.id),
+                "order_number": pending_order.order_number,
+                "shop_phone": shop_phone,
+                "fuel_type": pending_order.fuel_type.value,
+                "quantity_liters": str(pending_order.quantity_liters),
+                "delivery_address": pending_order.delivery_address or "",
+                "delivery_lat": str(lat),
+                "delivery_lng": str(lng),
+                "depot_id": str(pending_order.depot_id),
+            }
+            sent = await _send_offer(self.redis, self.whatsapp, self.session, driver, offer_data)
+            if sent:
+                # Offer IS the notification — just confirm status change if needed
+                return HandlerResult(messages=[responses.driver_now_available()] if was_offline else [])
+
+        if not was_offline:
+            return HandlerResult(messages=[responses.driver_already_available()])
+        return HandlerResult(messages=[responses.driver_now_available()])
+
     async def _load_key(self, key: str) -> dict | None:
         data = await self.redis.hgetall(key)
         if not data:
@@ -175,6 +261,22 @@ class DriverMessageHandler:
             for k, v in data.items()
         }
 
+    async def _track_messaging_window(self, phone_number: str) -> None:
+        """
+        Track the 24-hour WhatsApp messaging window.
+        Sets a Redis key that expires after 24 hours.
+        Best-effort: logs warning on failure but doesn't raise.
+        """
+        try:
+            timestamp = datetime.now(timezone.utc).isoformat()
+            await self.redis.set(
+                f"driver_window:{phone_number}",
+                timestamp,
+                ex=DRIVER_WINDOW_TTL
+            )
+        except Exception as e:
+            logger.warning(f"Failed to track messaging window for {phone_number}: {e}")
+
 
 async def _send_offer(
     redis_client: redis.Redis,
@@ -183,7 +285,13 @@ async def _send_offer(
     driver: Driver,
     offer_data: dict,
     attempt: int = 1,
-):
+) -> bool:
+    """Send a job offer to a driver. Returns False if the 24h messaging window is closed."""
+    window = await redis_client.get(f"driver_window:{driver.phone_number}")
+    if not window:
+        logger.warning(f"driver {driver.phone_number} has no open messaging window, skipping offer")
+        return False
+
     await _set_driver_status(session, driver.id, DriverStatus.PENDING_ACCEPTANCE)
 
     payload = {
@@ -207,6 +315,7 @@ async def _send_offer(
         header_text=msg.header,
         footer_text=msg.footer,
     )
+    return True
 
 
 async def _create_assignment(session: AsyncSession, order_id: UUID, driver_id: UUID) -> DeliveryAssignment:
@@ -233,7 +342,7 @@ async def _complete_assignment(
     await session.execute(
         update(DeliveryAssignment)
         .where(DeliveryAssignment.id == assignment_id)
-        .values(status=AssignmentStatus.COMPLETED, completed_at=datetime.now(timezone.utc))
+        .values(status=AssignmentStatus.COMPLETED, completed_at=datetime.utcnow())
     )
     await session.execute(
         update(Order).where(Order.id == order_id).values(status=OrderStatus.DELIVERED)
@@ -247,7 +356,7 @@ async def _set_driver_status(session: AsyncSession, driver_id: UUID, status: Dri
     )
 
 
-async def _find_next_driver(session: AsyncSession, depot_id: UUID, exclude_driver_id: UUID) -> Driver | None:
+async def _find_next_drivers(session: AsyncSession, depot_id: UUID, exclude_driver_id: UUID) -> list[Driver]:
     stmt = (
         select(Driver)
         .where(
@@ -255,10 +364,10 @@ async def _find_next_driver(session: AsyncSession, depot_id: UUID, exclude_drive
             Driver.status == DriverStatus.AVAILABLE,
             Driver.id != exclude_driver_id,
         )
-        .limit(1)
+        .order_by(Driver.id)
     )
     result = await session.execute(stmt)
-    return result.scalar_one_or_none()
+    return list(result.scalars().all())
 
 
 def _is_timed_out(offer: dict) -> bool:
