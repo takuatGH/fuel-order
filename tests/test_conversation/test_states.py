@@ -158,13 +158,16 @@ def test_location_dict_saves_coordinates():
     assert f.draft.longitude == 18.4
 
 
-def test_location_text_uses_default_coordinates():
+def test_location_text_rejected():
+    # Text addresses are no longer accepted — GPS share is required
     f, _ = make_flow(OrderState.AWAITING_LOCATION.value)
     f.draft.fuel_type = "diesel"
     f.draft.quantity_liters = 100.0
-    f.process_input("123 Main St", "location_provided")
-    assert f.draft.latitude is not None
-    assert f.draft.longitude is not None
+    result = f.process_input("123 Main St", "location_provided")
+    assert result is False
+    assert f.state == OrderState.AWAITING_LOCATION.value
+    assert f.draft.latitude is None
+    assert f.draft.longitude is None
 
 
 def test_empty_location_rejected():

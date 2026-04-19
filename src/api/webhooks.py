@@ -15,6 +15,7 @@ from src.conversation import MessageHandler, HandlerResult, DriverMessageHandler
 from src.conversation.responses import OutboundMessage
 from src.conversation import responses
 from src.database import get_session
+from src.models import OrderStatus
 from src.services import WhatsAppClient, IdentityService, OrderService, DispatchService
 from src.services.whatsapp import WhatsAppError
 from src.tasks.idempotency import is_already_seen
@@ -146,8 +147,11 @@ async def _enqueue_dispatch(
     can return immediately. The task handles depot lookup, driver selection,
     and the WhatsApp offer message.
     """
-    lat = draft.get("latitude", -26.2041)
-    lng = draft.get("longitude", 28.0473)
+    lat = draft.get("latitude")
+    lng = draft.get("longitude")
+    if lat is None or lng is None:
+        logger.error(f"order draft missing location for {phone_number}, aborting dispatch")
+        return
 
     identity_service = IdentityService(session)
     shop = await identity_service.get_or_create_shop(phone_number)
@@ -161,6 +165,7 @@ async def _enqueue_dispatch(
         longitude=lng,
         delivery_address=draft.get("delivery_address"),
     )
+    await order_service.update_status(order.id, OrderStatus.CONFIRMED)
     await session.commit()
 
     logger.info(f"order {order.order_number} created, enqueueing dispatch")

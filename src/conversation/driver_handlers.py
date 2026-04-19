@@ -39,6 +39,12 @@ class DriverMessageHandler:
         offer = await self._load_key(f"driver_offer:{driver.phone_number}")
         delivery = await self._load_key(f"driver_delivery:{driver.phone_number}")
 
+        # Auto-heal: offer TTL expired (Redis key gone) but DB status wasn't reset
+        if offer is None and driver.status == DriverStatus.PENDING_ACCEPTANCE:
+            await _set_driver_status(self.session, driver.id, DriverStatus.AVAILABLE)
+            await self.session.commit()
+            driver.status = DriverStatus.AVAILABLE
+
         if offer:
             current_state = "pending_acceptance"
         elif delivery:

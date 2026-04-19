@@ -46,9 +46,13 @@ async def dispatch_order(ctx: dict, *, order_id: str, shop_phone: str, draft: di
         logger.info(f"dispatch_order: order {order_id} is {order.status}, skipping")
         return
 
-    lat = draft.get("latitude", -26.2041)
-    lng = draft.get("longitude", 28.0473)
+    lat = draft.get("latitude")
+    lng = draft.get("longitude")
     fuel_type = draft["fuel_type"]
+
+    if lat is None or lng is None:
+        logger.error(f"dispatch_order: order {order_id} has no location in draft, cannot dispatch")
+        return
 
     dispatch_service = DispatchService(session)
     depot = await dispatch_service.find_nearest_depot(

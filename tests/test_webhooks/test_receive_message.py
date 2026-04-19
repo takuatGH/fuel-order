@@ -152,6 +152,7 @@ async def test_order_created_enqueues_job_not_direct_dispatch():
          patch("src.conversation.MessageHandler.handle", new=AsyncMock(return_value=handler_result)), \
          patch("src.services.IdentityService.get_or_create_shop", new=AsyncMock(return_value=MagicMock(id=uuid4()))), \
          patch("src.services.OrderService.create_order", new=AsyncMock(return_value=fake_order)), \
+         patch("src.services.OrderService.update_status", new=AsyncMock(return_value=fake_order)), \
          patch("src.api.webhooks.get_arq", new=AsyncMock(return_value=arq_mock)):
 
         transport = ASGITransport(app=app)
@@ -189,6 +190,7 @@ async def test_enqueue_failure_does_not_crash_webhook():
          patch("src.conversation.MessageHandler.handle", new=AsyncMock(return_value=handler_result)), \
          patch("src.services.IdentityService.get_or_create_shop", new=AsyncMock(return_value=MagicMock(id=uuid4()))), \
          patch("src.services.OrderService.create_order", new=AsyncMock(return_value=fake_order)), \
+         patch("src.services.OrderService.update_status", new=AsyncMock(return_value=fake_order)), \
          patch("src.api.webhooks.get_arq", new=AsyncMock(side_effect=Exception("redis down"))):
 
         transport = ASGITransport(app=app)

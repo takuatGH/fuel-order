@@ -169,7 +169,11 @@ class OrderFlow:
             return False
 
     def is_valid_location(self) -> bool:
-        return bool(self._current_input)
+        return (
+            isinstance(self._current_input, dict)
+            and self._current_input.get("latitude") is not None
+            and self._current_input.get("longitude") is not None
+        )
 
     def save_fuel_type(self):
         self.draft.fuel_type = str(self._current_input).lower().strip()
@@ -178,12 +182,8 @@ class OrderFlow:
         self.draft.quantity_liters = float(self._current_input)
 
     def save_location(self):
-        if isinstance(self._current_input, dict):
-            self.draft.latitude = self._current_input.get("latitude")
-            self.draft.longitude = self._current_input.get("longitude")
-        else:
-            self.draft.latitude = -26.2041
-            self.draft.longitude = 28.0473
+        self.draft.latitude = self._current_input.get("latitude")
+        self.draft.longitude = self._current_input.get("longitude")
 
     def reset_draft(self):
         self.draft = OrderDraft()

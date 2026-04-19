@@ -287,7 +287,7 @@ def reprompt(state: str) -> OutboundMessage:
     if state == OrderState.AWAITING_QUANTITY.value:
         return TextMessage(body="How many liters do you need?\n(Between 10 and 10,000 liters)")
     if state == OrderState.AWAITING_LOCATION.value:
-        return LocationRequestMessage(body="Where should we deliver?\n\nTap below to share your location.")
+        return LocationRequestMessage(body="Please use the button below to share your GPS location — typing an address won't work.")
     if state == OrderState.AWAITING_CONFIRMATION.value:
         return InteractiveButtonsMessage(
             body="Tap Confirm to place your order, or Cancel to start over:",
