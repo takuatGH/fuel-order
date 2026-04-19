@@ -278,6 +278,44 @@ def admin_order_completed(
     ))
 
 
+def order_status_message(order_number: str, status: str, fuel_type: str, quantity: float, driver_name: str | None = None, vehicle_plate: str | None = None) -> TextMessage:
+    status_map = {
+        "pending": "⏳ Finding a depot...",
+        "confirmed": "⏳ Looking for a driver...",
+        "dispatched": f"🚚 Driver *{driver_name}* ({vehicle_plate}) is on the way." if driver_name else "🚚 Driver is on the way.",
+        "delivered": "✅ Delivered.",
+        "cancelled": "❌ Cancelled.",
+    }
+    status_line = status_map.get(status, status.title())
+    return TextMessage(
+        body=(
+            f"*Order {order_number}*\n"
+            f"{quantity:.0f}L {fuel_type.title()}\n\n"
+            f"Status: {status_line}"
+        )
+    )
+
+
+def no_recent_orders() -> TextMessage:
+    return TextMessage(body="You don't have any recent orders. Send *order* to place one.")
+
+
+def order_cancel_confirmed(order_number: str) -> TextMessage:
+    return TextMessage(body=f"Order *{order_number}* has been cancelled.")
+
+
+def order_cancel_denied_dispatched(order_number: str) -> TextMessage:
+    return TextMessage(body=f"Order *{order_number}* already has a driver en route — it can't be cancelled now.")
+
+
+def order_cancel_denied_final(order_number: str, status: str) -> TextMessage:
+    return TextMessage(body=f"Order *{order_number}* is already {status} and cannot be changed.")
+
+
+def driver_job_already_taken() -> TextMessage:
+    return TextMessage(body="Sorry, this job was just accepted by another driver.")
+
+
 def reprompt(state: str) -> OutboundMessage:
     if state == OrderState.AWAITING_FUEL_TYPE.value:
         return InteractiveButtonsMessage(

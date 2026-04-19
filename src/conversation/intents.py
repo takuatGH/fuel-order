@@ -67,6 +67,8 @@ class IntentParser:
     AVAILABILITY_TRIGGERS = {"available", "online", "ready"}
 
     OFFLINE_TRIGGERS = {"offline", "break", "offduty"}
+
+    STATUS_TRIGGERS = {"status", "where", "update", "my order", "order status", "track", "check"}
     
     # regex for quantity extraction (e.g., "200", "200L", "200 liters")
     QUANTITY_PATTERN = re.compile(
@@ -124,10 +126,16 @@ class IntentParser:
         if self._matches_any(text_lower, self.OFFLINE_TRIGGERS):
             return ParsedIntent(intent="mark_offline")
         
-        # cancel always works (except in idle or order_placed)
+        # status check works in any state
+        if self._matches_any(text_lower, self.STATUS_TRIGGERS):
+            return ParsedIntent(intent="check_status")
+
+        # cancel mid-order or cancel last order from idle
         if self._matches_any(text_lower, self.CANCEL_TRIGGERS):
             if current_state not in (OrderState.IDLE.value, OrderState.ORDER_PLACED.value):
                 return ParsedIntent(intent="cancel")
+            elif current_state == OrderState.IDLE.value:
+                return ParsedIntent(intent="cancel_last_order")
         
         # --- state-specific parsing ---
         

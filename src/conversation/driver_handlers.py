@@ -90,6 +90,13 @@ class DriverMessageHandler:
 
     async def _accept(self, driver: Driver, offer: dict) -> HandlerResult:
         order_id = UUID(offer["order_id"])
+
+        # Atomic lock: only the first driver to set this key wins
+        lock_key = f"offer_lock:{order_id}"
+        acquired = await self.redis.set(lock_key, driver.phone_number, nx=True, ex=10)
+        if not acquired:
+            return HandlerResult(messages=[responses.driver_job_already_taken()])
+
         assignment = await _create_assignment(self.session, order_id, driver.id)
         await self.redis.delete(f"driver_offer:{driver.phone_number}")
 

@@ -115,7 +115,7 @@ async def receive_message(
         result = await handler.handle(driver=driver, message=message)
         await session.commit()
     else:
-        handler = MessageHandler(redis_client)
+        handler = MessageHandler(redis_client, session=session)
         result = await handler.handle(phone_number=phone_number, message=message)
 
     logger.info(f"handler result: {len(result.messages)} messages")

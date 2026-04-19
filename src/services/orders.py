@@ -3,11 +3,12 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import select, func
+from sqlalchemy import select, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 from geoalchemy2.functions import ST_MakePoint, ST_SetSRID
 
-from src.models import Order, OrderStatus, FuelType
+from src.models import Order, OrderStatus, FuelType, DeliveryAssignment, Driver, DriverStatus
 
 
 logger = logging.getLogger(__name__)
@@ -85,6 +86,67 @@ class OrderService:
         await self.session.flush()
         logger.info(f"order {order.order_number} assigned to depot {depot_id}")
         return order
+
+    async def get_latest_order_by_shop(self, shop_id: UUID) -> Order | None:
+        stmt = (
+            select(Order)
+            .options(
+                selectinload(Order.assignment).selectinload(DeliveryAssignment.driver)
+            )
+            .where(Order.shop_id == shop_id)
+            .order_by(Order.created_at.desc())
+            .limit(1)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def cancel_order(self, order_id: UUID) -> Order | None:
+        order = await self.get_order(order_id)
+        if not order:
+            return None
+        order.status = OrderStatus.CANCELLED
+        order.updated_at = datetime.utcnow()
+
+        # Free the driver if one was in pending_acceptance for this order
+        if order.assignment:
+            assignment = order.assignment
+            await self.session.execute(
+                update(Driver)
+                .where(Driver.id == assignment.driver_id)
+                .values(status=DriverStatus.AVAILABLE)
+            )
+
+        await self.session.flush()
+        logger.info(f"order {order.order_number} cancelled")
+        return order
+
+    async def get_all_orders(self, status: str | None = None, limit: int = 50) -> list[Order]:
+        stmt = (
+            select(Order)
+            .options(
+                selectinload(Order.assignment).selectinload(DeliveryAssignment.driver),
+                selectinload(Order.shop),
+            )
+            .order_by(Order.created_at.desc())
+            .limit(limit)
+        )
+        if status:
+            stmt = stmt.where(Order.status == OrderStatus(status))
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_order_detail(self, order_id: UUID) -> Order | None:
+        stmt = (
+            select(Order)
+            .options(
+                selectinload(Order.assignment).selectinload(DeliveryAssignment.driver),
+                selectinload(Order.shop),
+                selectinload(Order.depot),
+            )
+            .where(Order.id == order_id)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
 
     async def _generate_order_number(self) -> str:
         today = datetime.utcnow().strftime("%Y%m%d")

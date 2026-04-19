@@ -61,6 +61,9 @@ class Settings(BaseSettings):
     delivery_proximity_threshold_m: int = 500
     admin_whatsapp_number: str | None = None
 
+    # --- admin ---
+    admin_api_key: str = ""
+
     # --- feature flags ---
     enable_signature_verification: bool = True
     enable_iot_endpoints: bool = False

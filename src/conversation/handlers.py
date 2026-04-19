@@ -2,12 +2,14 @@ import logging
 from dataclasses import dataclass, field
 
 import redis.asyncio as redis
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from .states import OrderFlow, OrderState
 from .intents import IntentParser
 from .responses import OutboundMessage
 from . import responses
 from src.services.geocoding import GeocodingService
+from src.models import OrderStatus
 
 
 logger = logging.getLogger(__name__)
@@ -25,8 +27,9 @@ class HandlerResult:
 
 class MessageHandler:
 
-    def __init__(self, redis_client: redis.Redis):
+    def __init__(self, redis_client: redis.Redis, session: AsyncSession | None = None):
         self.redis = redis_client
+        self.session = session
         self.parser = IntentParser()
         self.geocoding = GeocodingService(redis_client)
 
@@ -53,6 +56,12 @@ class MessageHandler:
 
         if parsed.intent == "help":
             collected_messages.append(responses.help_message())
+
+        elif parsed.intent == "check_status":
+            collected_messages.append(await self._handle_check_status(phone_number))
+
+        elif parsed.intent == "cancel_last_order":
+            collected_messages.append(await self._handle_cancel_last_order(phone_number))
 
         elif parsed.intent == "unknown":
             if flow.state == OrderState.IDLE.value:
@@ -105,3 +114,43 @@ class MessageHandler:
         key = f"session:{phone_number}"
         await self.redis.hset(key, mapping=flow.to_session_data())
         await self.redis.expire(key, SESSION_TTL)
+
+    async def _handle_check_status(self, phone_number: str) -> OutboundMessage:
+        if not self.session:
+            return responses.no_recent_orders()
+        from src.services.identity import IdentityService
+        from src.services.orders import OrderService
+        shop = await IdentityService(self.session).get_or_create_shop(phone_number)
+        order = await OrderService(self.session).get_latest_order_by_shop(shop.id)
+        if not order:
+            return responses.no_recent_orders()
+        driver_name = plate = None
+        if order.assignment and order.assignment.driver:
+            driver_name = order.assignment.driver.name
+            plate = order.assignment.driver.vehicle_plate
+        return responses.order_status_message(
+            order.order_number,
+            order.status.value,
+            order.fuel_type.value,
+            float(order.quantity_liters),
+            driver_name,
+            plate,
+        )
+
+    async def _handle_cancel_last_order(self, phone_number: str) -> OutboundMessage:
+        if not self.session:
+            return responses.no_recent_orders()
+        from src.services.identity import IdentityService
+        from src.services.orders import OrderService
+        shop = await IdentityService(self.session).get_or_create_shop(phone_number)
+        order_service = OrderService(self.session)
+        order = await order_service.get_latest_order_by_shop(shop.id)
+        if not order:
+            return responses.no_recent_orders()
+        if order.status in (OrderStatus.DELIVERED, OrderStatus.CANCELLED):
+            return responses.order_cancel_denied_final(order.order_number, order.status.value)
+        if order.status == OrderStatus.DISPATCHED:
+            return responses.order_cancel_denied_dispatched(order.order_number)
+        await order_service.cancel_order(order.id)
+        await self.session.commit()
+        return responses.order_cancel_confirmed(order.order_number)
