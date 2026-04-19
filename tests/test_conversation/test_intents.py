@@ -118,3 +118,54 @@ def test_confirm_yes_still_works(parser):
 def test_confirm_no_still_works(parser):
     r = parser.parse(btn("confirm_no"), current_state=OrderState.AWAITING_CONFIRMATION.value)
     assert r.intent == "cancel"
+
+
+# --- availability intents ---
+
+@pytest.mark.parametrize("keyword", ["available", "online", "ready"])
+def test_availability_keywords_trigger_mark_available(parser, keyword):
+    r = parser.parse(txt(keyword), current_state="idle")
+    assert r.intent == "mark_available"
+
+
+@pytest.mark.parametrize("keyword", ["offline", "break", "offduty"])
+def test_offline_keywords_trigger_mark_offline(parser, keyword):
+    r = parser.parse(txt(keyword), current_state="idle")
+    assert r.intent == "mark_offline"
+
+
+@pytest.mark.parametrize("keyword", ["AVAILABLE", "Online", "READY"])
+def test_availability_keywords_are_case_insensitive(parser, keyword):
+    r = parser.parse(txt(keyword), current_state="idle")
+    assert r.intent == "mark_available"
+
+
+@pytest.mark.parametrize("keyword", ["OFFLINE", "Break", "OFFDUTY"])
+def test_offline_keywords_are_case_insensitive(parser, keyword):
+    r = parser.parse(txt(keyword), current_state="idle")
+    assert r.intent == "mark_offline"
+
+
+@pytest.mark.parametrize("text", ["I'm available now", "going online", "ready for jobs"])
+def test_availability_keywords_work_as_substrings(parser, text):
+    r = parser.parse(txt(text), current_state="pending_acceptance")
+    assert r.intent == "mark_available"
+
+
+@pytest.mark.parametrize("text", ["going offline now", "taking a break", "i am offduty"])
+def test_offline_keywords_work_as_substrings(parser, text):
+    r = parser.parse(txt(text), current_state="pending_acceptance")
+    assert r.intent == "mark_offline"
+
+
+@pytest.mark.parametrize("state", [
+    OrderState.IDLE.value,
+    OrderState.AWAITING_FUEL_TYPE.value,
+    OrderState.AWAITING_QUANTITY.value,
+    OrderState.AWAITING_CONFIRMATION.value,
+    "pending_acceptance",
+    "on_delivery",
+])
+def test_availability_intents_work_in_all_states(parser, state):
+    assert parser.parse(txt("available"), current_state=state).intent == "mark_available"
+    assert parser.parse(txt("offline"), current_state=state).intent == "mark_offline"

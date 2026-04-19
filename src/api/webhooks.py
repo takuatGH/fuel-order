@@ -3,6 +3,8 @@ import hashlib
 import logging
 from typing import Annotated
 
+from arq import ArqRedis, create_pool
+from arq.connections import RedisSettings
 from fastapi import APIRouter, Request, HTTPException, Depends, Query, Header
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +17,7 @@ from src.conversation import responses
 from src.database import get_session
 from src.services import WhatsAppClient, IdentityService, OrderService, DispatchService
 from src.services.whatsapp import WhatsAppError
+from src.tasks.idempotency import is_already_seen
 
 
 logger = logging.getLogger(__name__)
@@ -27,7 +30,7 @@ async def get_redis() -> redis.Redis:
     try:
         yield client
     finally:
-        await client.close()
+        await client.aclose()
 
 
 async def get_whatsapp_client() -> WhatsAppClient:
@@ -36,6 +39,19 @@ async def get_whatsapp_client() -> WhatsAppClient:
         phone_number_id=settings.whatsapp_phone_number_id,
         access_token=settings.whatsapp_access_token,
     )
+
+
+async def get_arq() -> ArqRedis:
+    settings = get_settings()
+    import urllib.parse
+    parsed = urllib.parse.urlparse(settings.redis_url)
+    rs = RedisSettings(
+        host=parsed.hostname or "localhost",
+        port=parsed.port or 6379,
+        database=int(parsed.path.lstrip("/") or 0),
+        password=parsed.password,
+    )
+    return await create_pool(rs)
 
 
 @router.get("")
@@ -80,12 +96,18 @@ async def receive_message(
         return {"status": "ok"}
 
     phone_number = message_data["from"]
+    message_id = message_data["message_id"]
     message = message_data["message"]
+
+    # Idempotency — Meta sometimes delivers the same webhook more than once
+    if await is_already_seen(redis_client, message_id):
+        logger.info(f"duplicate message {message_id} from {phone_number}, dropping")
+        return {"status": "ok"}
+
     logger.info(f"received message from {phone_number}: {message.get('type')}")
 
     identity_service = IdentityService(session)
     driver = await identity_service.get_driver_by_phone(phone_number)
-    logger.info(f"driver lookup for {phone_number}: {'found' if driver else 'not found'}")
 
     if driver:
         handler = DriverMessageHandler(redis_client, session, whatsapp)
@@ -94,29 +116,77 @@ async def receive_message(
     else:
         handler = MessageHandler(redis_client)
         result = await handler.handle(phone_number=phone_number, message=message)
-    logger.info(f"handler result: {len(result.messages)} messages, intents processed")
+
+    logger.info(f"handler result: {len(result.messages)} messages")
 
     for msg in result.messages:
         await _send_outbound(whatsapp, phone_number, msg)
 
     if result.order_created and result.order_draft:
-        order_number, driver_dispatched = await _persist_order(
+        await _enqueue_dispatch(
+            redis_client=redis_client,
             session=session,
+            whatsapp=whatsapp,
             phone_number=phone_number,
             draft=result.order_draft,
-            redis_client=redis_client,
-            whatsapp=whatsapp,
         )
-        logger.info(f"order {order_number} persisted for {phone_number}, driver dispatched: {driver_dispatched}")
-        try:
-            await whatsapp.send_text_message(
-                to=phone_number,
-                text=responses.order_placed_message(order_number).body,
-            )
-        except WhatsAppError as e:
-            logger.error(f"failed to send order number to {phone_number}: {e.status_code} {e.error_data}")
 
     return {"status": "ok"}
+
+
+async def _enqueue_dispatch(
+    redis_client: redis.Redis,
+    session: AsyncSession,
+    whatsapp: WhatsAppClient,
+    phone_number: str,
+    draft: dict,
+) -> None:
+    """
+    Create the order record, then enqueue the dispatch task so the webhook
+    can return immediately. The task handles depot lookup, driver selection,
+    and the WhatsApp offer message.
+    """
+    lat = draft.get("latitude", -26.2041)
+    lng = draft.get("longitude", 28.0473)
+
+    identity_service = IdentityService(session)
+    shop = await identity_service.get_or_create_shop(phone_number)
+
+    order_service = OrderService(session)
+    order = await order_service.create_order(
+        shop_id=shop.id,
+        fuel_type=draft["fuel_type"],
+        quantity_liters=draft["quantity_liters"],
+        latitude=lat,
+        longitude=lng,
+        delivery_address=draft.get("delivery_address"),
+    )
+    await session.commit()
+
+    logger.info(f"order {order.order_number} created, enqueueing dispatch")
+
+    try:
+        await whatsapp.send_text_message(
+            to=phone_number,
+            text=responses.order_placed_message(order.order_number).body,
+        )
+    except WhatsAppError as e:
+        logger.error(f"failed to send order confirmation to {phone_number}: {e.status_code} {e.error_data}")
+
+    try:
+        arq = await get_arq()
+        await arq.enqueue_job(
+            "dispatch_order",
+            order_id=str(order.id),
+            shop_phone=phone_number,
+            draft=draft,
+        )
+        logger.info(f"dispatch job enqueued for order {order.order_number}")
+    except Exception as e:
+        logger.error(
+            f"failed to enqueue dispatch for order {order.order_number}: {e} — "
+            "order stays confirmed, will dispatch on next driver availability signal"
+        )
 
 
 async def _send_outbound(whatsapp: WhatsAppClient, to: str, msg: OutboundMessage):
@@ -135,77 +205,6 @@ async def _send_outbound(whatsapp: WhatsAppClient, to: str, msg: OutboundMessage
             await whatsapp.send_location_request(to=to, body_text=msg.body)
     except WhatsAppError as e:
         logger.error(f"failed to send outbound message to {to}: {e.status_code} {e.error_data}")
-
-
-async def _persist_order(
-    session: AsyncSession,
-    phone_number: str,
-    draft: dict,
-    redis_client: redis.Redis,
-    whatsapp: WhatsAppClient,
-) -> tuple[str, bool]:
-    from src.conversation.driver_handlers import _send_offer
-
-    lat = draft.get("latitude", -26.2041)
-    lng = draft.get("longitude", 28.0473)
-
-    identity_service = IdentityService(session)
-    shop = await identity_service.get_or_create_shop(phone_number)
-
-    order_service = OrderService(session)
-    order = await order_service.create_order(
-        shop_id=shop.id,
-        fuel_type=draft["fuel_type"],
-        quantity_liters=draft["quantity_liters"],
-        latitude=lat,
-        longitude=lng,
-        delivery_address=draft.get("delivery_address"),
-    )
-
-    dispatch_service = DispatchService(session)
-    depot = await dispatch_service.find_nearest_depot(
-        latitude=lat,
-        longitude=lng,
-        fuel_type=draft["fuel_type"],
-    )
-
-    if not depot:
-        await whatsapp.send_text_message(
-            to=phone_number,
-            text="Sorry, no depot is available in your area for this fuel type.",
-        )
-        await session.commit()
-        return order.order_number, False
-
-    await order_service.assign_depot(order.id, depot.id)
-
-    offer_data = {
-        "order_id": str(order.id),
-        "order_number": order.order_number,
-        "shop_phone": phone_number,
-        "fuel_type": draft["fuel_type"],
-        "quantity_liters": str(draft["quantity_liters"]),
-        "delivery_address": draft.get("delivery_address", ""),
-        "delivery_lat": str(lat),
-        "delivery_lng": str(lng),
-        "depot_id": str(depot.id),
-    }
-
-    sent = False
-    drivers = await dispatch_service.find_available_drivers(depot.id)
-    for driver in drivers:
-        sent = await _send_offer(
-            redis_client=redis_client,
-            whatsapp=whatsapp,
-            session=session,
-            driver=driver,
-            offer_data=offer_data,
-        )
-        if sent:
-            break
-
-    await session.commit()
-    return order.order_number, sent
 
 
 def _verify_signature(body: bytes, signature_header: str | None, secret: str) -> bool:

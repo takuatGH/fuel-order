@@ -423,3 +423,142 @@ def test_old_offer_is_timed_out():
 
 def test_missing_offer_sent_at_not_timed_out():
     assert not _is_timed_out({})
+
+
+# ---------------------------------------------------------------------------
+# availability: status transitions
+# ---------------------------------------------------------------------------
+
+async def test_mark_available_when_offline_sets_status_and_returns_now_available():
+    driver = make_driver(status=DriverStatus.OFFLINE)
+    handler, redis_mock, session_mock, _ = make_handler()
+    with patch("src.services.DispatchService") as MockDS:
+        MockDS.return_value.find_pending_order_for_depot = AsyncMock(return_value=None)
+        result = await handler.handle(driver, txt_msg("available"))
+
+    assert len(result.messages) == 1
+    assert "available" in result.messages[0].body.lower()
+    session_mock.execute.assert_awaited()
+
+
+async def test_mark_available_when_already_available_returns_already_available():
+    driver = make_driver(status=DriverStatus.AVAILABLE)
+    handler, *_ = make_handler()
+    with patch("src.services.DispatchService") as MockDS:
+        MockDS.return_value.find_pending_order_for_depot = AsyncMock(return_value=None)
+        result = await handler.handle(driver, txt_msg("available"))
+
+    assert len(result.messages) == 1
+    assert "already" in result.messages[0].body.lower()
+
+
+async def test_mark_offline_when_available_sets_status_and_returns_now_offline():
+    driver = make_driver(status=DriverStatus.AVAILABLE)
+    handler, _, session_mock, _ = make_handler()
+    result = await handler.handle(driver, txt_msg("offline"))
+
+    assert len(result.messages) == 1
+    assert "offline" in result.messages[0].body.lower()
+    session_mock.execute.assert_awaited()
+
+
+async def test_mark_offline_when_already_offline_returns_already_offline():
+    driver = make_driver(status=DriverStatus.OFFLINE)
+    handler, *_ = make_handler()
+    result = await handler.handle(driver, txt_msg("offline"))
+
+    assert len(result.messages) == 1
+    assert "already" in result.messages[0].body.lower()
+
+
+async def test_mark_available_rejected_when_on_delivery():
+    driver = make_driver(status=DriverStatus.ON_DELIVERY)
+    d = delivery_record()
+    handler, *_ = make_handler({f"driver_delivery:{driver.phone_number}": d})
+    result = await handler.handle(driver, txt_msg("available"))
+
+    assert len(result.messages) == 1
+    assert "delivery" in result.messages[0].body.lower()
+
+
+async def test_mark_offline_rejected_when_on_delivery():
+    driver = make_driver(status=DriverStatus.ON_DELIVERY)
+    d = delivery_record()
+    handler, *_ = make_handler({f"driver_delivery:{driver.phone_number}": d})
+    result = await handler.handle(driver, txt_msg("offline"))
+
+    assert len(result.messages) == 1
+    assert "delivery" in result.messages[0].body.lower()
+
+
+async def test_mark_available_rejected_when_pending_acceptance():
+    driver = make_driver(status=DriverStatus.PENDING_ACCEPTANCE)
+    offer = fresh_offer()
+    handler, *_ = make_handler({f"driver_offer:{driver.phone_number}": offer})
+    result = await handler.handle(driver, txt_msg("available"))
+
+    assert len(result.messages) == 1
+    # message should explain they have a pending offer
+    assert len(result.messages[0].body) > 0
+
+
+async def test_availability_dispatches_pending_order_if_waiting():
+    driver = make_driver(status=DriverStatus.OFFLINE)
+    handler, redis_mock, session_mock, whatsapp_mock = make_handler()
+
+    from src.models import Order, OrderStatus
+    pending_order = MagicMock(spec=Order)
+    pending_order.id = uuid4()
+    pending_order.order_number = "FO-20260416-001"
+    pending_order.shop_id = uuid4()
+    pending_order.depot_id = driver.depot_id
+    pending_order.fuel_type = MagicMock()
+    pending_order.fuel_type.value = "diesel"
+    pending_order.quantity_liters = 50
+    pending_order.delivery_address = "1 Main St"
+    pending_order.status = OrderStatus.CONFIRMED
+
+    shop_mock = MagicMock()
+    shop_mock.phone_number = "27821234567"
+
+    coords_result = MagicMock()
+    coords_result.fetchone = MagicMock(return_value=(-26.2041, 28.0473))
+
+    async def fake_execute(stmt, *args, **kwargs):
+        result = MagicMock()
+        result.scalar_one_or_none = MagicMock(return_value=shop_mock)
+        return result
+
+    session_mock.execute = AsyncMock(side_effect=fake_execute)
+
+    with patch("src.services.DispatchService") as MockDS, \
+         patch("src.conversation.driver_handlers._send_offer", new=AsyncMock(return_value=True)):
+        MockDS.return_value.find_pending_order_for_depot = AsyncMock(return_value=pending_order)
+        result = await handler.handle(driver, txt_msg("available"))
+
+    assert len(result.messages) == 1
+    assert "available" in result.messages[0].body.lower()
+
+
+# ---------------------------------------------------------------------------
+# messaging window tracking
+# ---------------------------------------------------------------------------
+
+async def test_messaging_window_set_on_every_message():
+    driver = make_driver()
+    handler, redis_mock, *_ = make_handler()
+    await handler.handle(driver, txt_msg("hello"))
+
+    redis_mock.set.assert_awaited_once()
+    call = redis_mock.set.call_args
+    assert f"driver_window:{driver.phone_number}" in call.args or \
+           call.args[0] == f"driver_window:{driver.phone_number}"
+
+
+async def test_messaging_window_redis_failure_does_not_raise():
+    driver = make_driver()
+    handler, redis_mock, *_ = make_handler()
+    redis_mock.set = AsyncMock(side_effect=Exception("redis down"))
+
+    result = await handler.handle(driver, txt_msg("hello"))
+    assert isinstance(result.messages[0], TextMessage)

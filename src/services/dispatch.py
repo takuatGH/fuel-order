@@ -1,7 +1,9 @@
 import logging
+import math
+from dataclasses import dataclass, field
 from uuid import UUID
 
-from sqlalchemy import cast, select
+from sqlalchemy import cast, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from geoalchemy2.functions import ST_Distance, ST_DWithin, ST_MakePoint, ST_SetSRID
 from geoalchemy2.types import Geography
@@ -10,6 +12,14 @@ from src.models import Depot, Driver, DriverStatus, Order, OrderStatus, Delivery
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class DispatchResult:
+    depot: Depot | None
+    assignment: DeliveryAssignment | None
+    distance_km: float | None
+    is_fallback: bool = False
 
 
 class DispatchService:
@@ -82,6 +92,52 @@ class DispatchService:
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
+    async def find_fallback_depots(
+        self,
+        primary_depot: Depot,
+        fuel_type: str,
+        max_distance_km: float = 50.0,
+    ) -> list[Depot]:
+        """Find other active depots with the fuel type, ordered by distance from primary depot."""
+        primary_geo = cast(primary_depot.location, Geography(srid=4326))
+        max_distance_m = max_distance_km * 1000
+
+        stmt = (
+            select(Depot)
+            .where(
+                Depot.is_active == True,
+                Depot.id != primary_depot.id,
+                Depot.fuel_types_available.contains([fuel_type.lower()]),
+                ST_DWithin(cast(Depot.location, Geography(srid=4326)), primary_geo, max_distance_m),
+            )
+            .order_by(ST_Distance(cast(Depot.location, Geography(srid=4326)), primary_geo))
+        )
+
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def _calculate_distance(
+        self,
+        depot: Depot,
+        latitude: float,
+        longitude: float,
+    ) -> float | None:
+        """Return distance in km between depot and delivery coordinates using PostGIS."""
+        try:
+            point = cast(
+                ST_SetSRID(ST_MakePoint(longitude, latitude), 4326),
+                Geography(srid=4326),
+            )
+            depot_geo = cast(depot.location, Geography(srid=4326))
+            result = await self.session.execute(
+                select(ST_Distance(depot_geo, point))
+            )
+            distance_m = result.scalar()
+            return float(distance_m) / 1000.0 if distance_m is not None else None
+        except Exception as e:
+            logger.warning(f"distance calculation failed for depot {depot.id}: {e}")
+            return None
+
     async def assign_driver(self, order_id: UUID, driver_id: UUID) -> DeliveryAssignment:
         stmt = select(Driver).where(Driver.id == driver_id)
         result = await self.session.execute(stmt)
@@ -104,23 +160,36 @@ class DispatchService:
         order: Order,
         latitude: float,
         longitude: float,
-    ) -> tuple[Depot | None, DeliveryAssignment | None]:
-        depot = await self.find_nearest_depot(
+    ) -> DispatchResult:
+        primary_depot = await self.find_nearest_depot(
             latitude=latitude,
             longitude=longitude,
             fuel_type=order.fuel_type.value,
         )
 
-        if not depot:
+        if not primary_depot:
             logger.warning(f"dispatch failed: no depot for order {order.order_number}")
-            return None, None
+            return DispatchResult(depot=None, assignment=None, distance_km=None)
 
-        order.depot_id = depot.id
+        distance_km = await self._calculate_distance(primary_depot, latitude, longitude)
 
-        driver = await self.find_available_driver(depot.id)
-        if not driver:
-            logger.warning(f"no driver available at depot for {order.order_number}")
-            return depot, None
+        driver = await self.find_available_driver(primary_depot.id)
+        if driver:
+            order.depot_id = primary_depot.id
+            assignment = await self.assign_driver(order.id, driver.id)
+            return DispatchResult(depot=primary_depot, assignment=assignment, distance_km=distance_km, is_fallback=False)
 
-        assignment = await self.assign_driver(order.id, driver.id)
-        return depot, assignment
+        fallback_depots = await self.find_fallback_depots(primary_depot, order.fuel_type.value)
+        for fallback in fallback_depots:
+            driver = await self.find_available_driver(fallback.id)
+            if driver:
+                fallback_distance = await self._calculate_distance(fallback, latitude, longitude)
+                order.depot_id = fallback.id
+                assignment = await self.assign_driver(order.id, driver.id)
+                logger.info(f"order {order.order_number} assigned to fallback depot {fallback.name}")
+                return DispatchResult(depot=fallback, assignment=assignment, distance_km=fallback_distance, is_fallback=True)
+
+        # No drivers anywhere — keep primary depot on the order for manual follow-up
+        order.depot_id = primary_depot.id
+        logger.warning(f"no drivers available anywhere for order {order.order_number}")
+        return DispatchResult(depot=primary_depot, assignment=None, distance_km=distance_km)

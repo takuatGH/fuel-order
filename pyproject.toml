@@ -29,8 +29,7 @@ dependencies = [
     "pydantic-settings>=2.1.0",
     
     # async task queue (for dispatch)
-    "celery>=5.3.0",
-    "redis>=5.0.0",              # celery broker
+    "arq>=0.25.0",
 ]
 
 [project.optional-dependencies]
