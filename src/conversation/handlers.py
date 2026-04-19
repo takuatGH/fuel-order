@@ -45,14 +45,10 @@ class MessageHandler:
         logger.info(f"[{phone_number}] state={flow.state}, intent={parsed.intent}, value={parsed.value}")
 
         # geocode before process_input so delivery_address is set when on_awaiting_confirmation fires
-        if parsed.intent == "location_provided":
-            if isinstance(parsed.value, dict):
-                coords = parsed.value
-                flow.draft.delivery_address = await self.geocoding.reverse_geocode(
-                    coords["latitude"], coords["longitude"]
-                )
-            elif isinstance(parsed.value, str):
-                flow.draft.delivery_address = parsed.value
+        if parsed.intent == "location_provided" and isinstance(parsed.value, dict):
+            coords = parsed.value
+            address = await self.geocoding.reverse_geocode(coords["latitude"], coords["longitude"])
+            flow.draft.delivery_address = address or f"GPS: {coords['latitude']:.4f}, {coords['longitude']:.4f}"
 
         if parsed.intent == "help":
             collected_messages.append(responses.help_message())
@@ -67,23 +63,31 @@ class MessageHandler:
             if flow.state == OrderState.IDLE.value:
                 flow.process_input(None, "start_order")
             else:
-                collected_messages.append(responses.reprompt(flow.state))
+                collected_messages.append(responses.reprompt(flow.state, draft=flow.draft))
 
         elif parsed.intent.startswith("invalid_"):
             if parsed.intent == "invalid_fuel_type":
                 collected_messages.append(responses.invalid_fuel_type_error())
             elif parsed.intent in ("invalid_quantity", "invalid_quantity_range"):
-                collected_messages.append(responses.invalid_quantity_error())
+                collected_messages.append(responses.invalid_quantity_error(flow.draft.fuel_type))
             elif parsed.intent == "invalid_confirmation":
                 collected_messages.append(responses.invalid_confirmation_error())
             else:
-                collected_messages.append(responses.reprompt(flow.state))
+                collected_messages.append(responses.reprompt(flow.state, draft=flow.draft))
 
         else:
-            success = flow.process_input(parsed.value, parsed.intent)
+            # Route to edit-mode trigger when user is editing a single field
+            _EDIT_TRIGGER = {
+                "fuel_selected": "fuel_selected_edit",
+                "quantity_provided": "quantity_provided_edit",
+                "location_provided": "location_provided_edit",
+            }
+            trigger = _EDIT_TRIGGER.get(parsed.intent, parsed.intent) if flow.draft.is_editing else parsed.intent
+
+            success = flow.process_input(parsed.value, trigger)
             if not success:
                 logger.warning(f"[{phone_number}] transition failed: state={flow.state}, intent={parsed.intent}")
-                collected_messages.append(responses.reprompt(flow.state))
+                collected_messages.append(responses.reprompt(flow.state, draft=flow.draft))
 
         result.events = flow.pending_events
         flow.pending_events = []

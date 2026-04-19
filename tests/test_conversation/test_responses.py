@@ -39,7 +39,7 @@ def test_location_prompt_is_location_request():
 def test_confirmation_prompt_is_buttons():
     msg = confirmation_prompt("diesel", 200.0, "-26.2041, 28.0473")
     assert isinstance(msg, InteractiveButtonsMessage)
-    assert len(msg.buttons) == 2
+    assert len(msg.buttons) == 3  # Confirm Order, Edit Details, Cancel
 
 
 def test_order_placed_message_is_text():
@@ -71,7 +71,7 @@ def test_invalid_quantity_error_is_text():
 def test_invalid_confirmation_error_is_buttons():
     msg = invalid_confirmation_error()
     assert isinstance(msg, InteractiveButtonsMessage)
-    assert len(msg.buttons) == 2
+    assert len(msg.buttons) == 3  # matches _CONFIRM_BUTTONS
 
 
 # --- button id correctness (must match intents.py _parse_button_id) ---
@@ -85,7 +85,7 @@ def test_fuel_buttons_have_correct_ids():
 def test_confirm_buttons_have_correct_ids():
     buttons = confirmation_prompt("diesel", 100.0, "addr").buttons
     ids = {b["id"] for b in buttons}
-    assert ids == {"confirm_yes", "confirm_no"}
+    assert ids == {"confirm_yes", "confirm_edit", "confirm_no"}
 
 
 def test_invalid_fuel_buttons_match_fuel_type_prompt():

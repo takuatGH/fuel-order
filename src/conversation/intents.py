@@ -281,6 +281,15 @@ class IntentParser:
         if button_id == "delivery_override_no":
             return ParsedIntent(intent="delivery_override_cancel")
 
+        if button_id == "confirm_edit":
+            return ParsedIntent(intent="edit_order")
+        if button_id == "edit_fuel_type":
+            return ParsedIntent(intent="edit_fuel_type")
+        if button_id == "edit_quantity":
+            return ParsedIntent(intent="edit_quantity")
+        if button_id == "edit_location":
+            return ParsedIntent(intent="edit_location")
+
         return ParsedIntent(intent="unknown")
     
     def _matches_any(self, text: str, keywords: set) -> bool:

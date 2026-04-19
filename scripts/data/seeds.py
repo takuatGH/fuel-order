@@ -5,6 +5,7 @@ DEPOTS = [
         "lat": -26.1076,
         "lng": 28.0567,
         "fuel_types": ["diesel", "petrol", "paraffin"],
+        "price_per_liter": 22.50,
     },
     {
         "name": "FuelFlow Depot Midrand",
@@ -12,6 +13,7 @@ DEPOTS = [
         "lat": -25.9988,
         "lng": 28.1282,
         "fuel_types": ["diesel", "petrol"],
+        "price_per_liter": 21.80,
     },
     {
         "name": "FuelFlow Depot Soweto",
@@ -19,6 +21,7 @@ DEPOTS = [
         "lat": -26.2678,
         "lng": 27.8585,
         "fuel_types": ["diesel", "paraffin"],
+        "price_per_liter": 21.20,
     },
 ]
 

@@ -156,6 +156,9 @@ async def _enqueue_dispatch(
     identity_service = IdentityService(session)
     shop = await identity_service.get_or_create_shop(phone_number)
 
+    settings = get_settings()
+    quoted_price = draft["quantity_liters"] * settings.default_price_per_liter if settings.default_price_per_liter else None
+
     order_service = OrderService(session)
     order = await order_service.create_order(
         shop_id=shop.id,
@@ -164,6 +167,7 @@ async def _enqueue_dispatch(
         latitude=lat,
         longitude=lng,
         delivery_address=draft.get("delivery_address"),
+        quoted_price=quoted_price,
     )
     await order_service.update_status(order.id, OrderStatus.CONFIRMED)
     await session.commit()
@@ -173,7 +177,7 @@ async def _enqueue_dispatch(
     try:
         await whatsapp.send_text_message(
             to=phone_number,
-            text=responses.order_placed_message(order.order_number).body,
+            text=responses.order_placed_message(order.order_number, quoted_price).body,
         )
     except WhatsAppError as e:
         logger.error(f"failed to send order confirmation to {phone_number}: {e.status_code} {e.error_data}")

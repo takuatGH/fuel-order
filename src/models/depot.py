@@ -1,6 +1,7 @@
 import uuid
+from decimal import Decimal
 
-from sqlalchemy import String, Boolean
+from sqlalchemy import String, Boolean, Numeric
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from geoalchemy2 import Geometry
@@ -18,6 +19,7 @@ class Depot(Base):
     fuel_types_available: Mapped[list[str]] = mapped_column(ARRAY(String(50)), default=list)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     owner_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, default=None)
+    price_per_liter: Mapped[Decimal | None] = mapped_column(Numeric(8, 2), nullable=True, default=None)
     created_at: Mapped[timestamp_now]
 
     orders: Mapped[list["Order"]] = relationship(back_populates="depot")

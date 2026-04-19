@@ -33,8 +33,15 @@ _FUEL_BUTTONS = [
 ]
 
 _CONFIRM_BUTTONS = [
-    {"id": "confirm_yes", "title": "Confirm"},
+    {"id": "confirm_yes", "title": "Confirm Order"},
+    {"id": "confirm_edit", "title": "Edit Details"},
     {"id": "confirm_no", "title": "Cancel"},
+]
+
+_EDIT_FIELD_BUTTONS = [
+    {"id": "edit_fuel_type", "title": "Fuel Type"},
+    {"id": "edit_quantity", "title": "Quantity"},
+    {"id": "edit_location", "title": "Location"},
 ]
 
 _JOB_OFFER_BUTTONS = [
@@ -73,24 +80,35 @@ def location_prompt(quantity: float, fuel_type: str) -> LocationRequestMessage:
     )
 
 
-def confirmation_prompt(fuel_type: str, quantity: float, address: str) -> InteractiveButtonsMessage:
+def confirmation_prompt(fuel_type: str, quantity: float, address: str, quoted_price: float | None = None) -> InteractiveButtonsMessage:
+    price_line = f"\n• Est. price: *R{quoted_price:,.2f}*" if quoted_price is not None else ""
     return InteractiveButtonsMessage(
         body=(
             "*Order Summary*\n\n"
             f"• Fuel: {fuel_type.title()}\n"
-            f"• Quantity: {quantity:.0f} liters\n"
+            f"• Quantity: {quantity:.0f}L\n"
             f"• Location: {address}"
+            f"{price_line}"
         ),
         buttons=_CONFIRM_BUTTONS,
     )
 
 
-def order_placed_message(order_number: str) -> TextMessage:
+def edit_field_prompt() -> InteractiveButtonsMessage:
+    return InteractiveButtonsMessage(
+        body="What would you like to change?",
+        buttons=_EDIT_FIELD_BUTTONS,
+    )
+
+
+def order_placed_message(order_number: str, quoted_price: float | None = None) -> TextMessage:
+    price_line = f"\nEst. cost: *R{quoted_price:,.2f}*" if quoted_price is not None else ""
     return TextMessage(
         body=(
             f"✅ *Order Placed!*\n"
-            f"Order number: *{order_number}*\n\n"
-            "We're finding a driver. You'll be notified when one accepts."
+            f"Order: *{order_number}*{price_line}\n\n"
+            "We're finding a driver. You'll be notified when one accepts.\n"
+            "Send *status* anytime to check your order."
         )
     )
 
@@ -127,9 +145,10 @@ def invalid_fuel_type_error() -> InteractiveButtonsMessage:
     )
 
 
-def invalid_quantity_error() -> TextMessage:
+def invalid_quantity_error(fuel_type: str | None = None) -> TextMessage:
+    fuel_ctx = f" of {fuel_type.title()}" if fuel_type else ""
     return TextMessage(
-        body="Please enter a number between 10 and 10,000 liters.\n\nExample: *200* or *500L*"
+        body=f"Please enter a number between 10 and 10,000 liters{fuel_ctx}.\n\nExample: *200* or *500L*"
     )
 
 
@@ -316,14 +335,15 @@ def driver_job_already_taken() -> TextMessage:
     return TextMessage(body="Sorry, this job was just accepted by another driver.")
 
 
-def reprompt(state: str) -> OutboundMessage:
+def reprompt(state: str, draft=None) -> OutboundMessage:
     if state == OrderState.AWAITING_FUEL_TYPE.value:
         return InteractiveButtonsMessage(
             body="What type of fuel do you need?",
             buttons=_FUEL_BUTTONS,
         )
     if state == OrderState.AWAITING_QUANTITY.value:
-        return TextMessage(body="How many liters do you need?\n(Between 10 and 10,000 liters)")
+        fuel_ctx = f" of *{draft.fuel_type.title()}*" if draft and draft.fuel_type else ""
+        return TextMessage(body=f"How many liters{fuel_ctx} do you need?\n(Between 10 and 10,000 liters)")
     if state == OrderState.AWAITING_LOCATION.value:
         return LocationRequestMessage(body="Please use the button below to share your GPS location — typing an address won't work.")
     if state == OrderState.AWAITING_CONFIRMATION.value:
@@ -331,4 +351,6 @@ def reprompt(state: str) -> OutboundMessage:
             body="Tap Confirm to place your order, or Cancel to start over:",
             buttons=_CONFIRM_BUTTONS,
         )
+    if state == OrderState.AWAITING_EDIT_FIELD.value:
+        return edit_field_prompt()
     return TextMessage(body="Send *order* to place a fuel order, or *help* for options.")

@@ -15,6 +15,7 @@ class OrderState(str, Enum):
     AWAITING_QUANTITY = "awaiting_quantity"
     AWAITING_LOCATION = "awaiting_location"
     AWAITING_CONFIRMATION = "awaiting_confirmation"
+    AWAITING_EDIT_FIELD = "awaiting_edit_field"
     ORDER_PLACED = "order_placed"
 
 
@@ -25,6 +26,7 @@ class OrderDraft:
     latitude: float | None = None
     longitude: float | None = None
     delivery_address: str | None = None
+    is_editing: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -33,6 +35,7 @@ class OrderDraft:
             "latitude": self.latitude,
             "longitude": self.longitude,
             "delivery_address": self.delivery_address,
+            "is_editing": self.is_editing,
         }
 
     @classmethod
@@ -43,6 +46,7 @@ class OrderDraft:
             latitude=data.get("latitude"),
             longitude=data.get("longitude"),
             delivery_address=data.get("delivery_address"),
+            is_editing=bool(data.get("is_editing", False)),
         )
 
     def is_complete(self) -> bool:
@@ -99,12 +103,69 @@ class OrderFlow:
             "after":     "on_order_placed",
         },
         {
+            "trigger":   "edit_order",
+            "source":    "awaiting_confirmation",
+            "dest":      "awaiting_edit_field",
+            "condition": None,
+            "before":    None,
+            "after":     "on_awaiting_edit_field",
+        },
+        {
+            "trigger":   "edit_fuel_type",
+            "source":    "awaiting_edit_field",
+            "dest":      "awaiting_fuel_type",
+            "condition": None,
+            "before":    "set_editing",
+            "after":     "on_awaiting_fuel_type_edit",
+        },
+        {
+            "trigger":   "edit_quantity",
+            "source":    "awaiting_edit_field",
+            "dest":      "awaiting_quantity",
+            "condition": None,
+            "before":    "set_editing",
+            "after":     "on_awaiting_quantity",
+        },
+        {
+            "trigger":   "edit_location",
+            "source":    "awaiting_edit_field",
+            "dest":      "awaiting_location",
+            "condition": None,
+            "before":    "set_editing",
+            "after":     "on_awaiting_location",
+        },
+        {
+            "trigger":   "fuel_selected_edit",
+            "source":    "awaiting_fuel_type",
+            "dest":      "awaiting_confirmation",
+            "condition": "is_valid_fuel_type",
+            "before":    "save_fuel_type_clear_edit",
+            "after":     "on_awaiting_confirmation",
+        },
+        {
+            "trigger":   "quantity_provided_edit",
+            "source":    "awaiting_quantity",
+            "dest":      "awaiting_confirmation",
+            "condition": "is_valid_quantity",
+            "before":    "save_quantity_clear_edit",
+            "after":     "on_awaiting_confirmation",
+        },
+        {
+            "trigger":   "location_provided_edit",
+            "source":    "awaiting_location",
+            "dest":      "awaiting_confirmation",
+            "condition": "is_valid_location",
+            "before":    "save_location_clear_edit",
+            "after":     "on_awaiting_confirmation",
+        },
+        {
             "trigger":   "cancel",
             "source":    [
                 "awaiting_fuel_type",
                 "awaiting_quantity",
                 "awaiting_location",
                 "awaiting_confirmation",
+                "awaiting_edit_field",
             ],
             "dest":      "idle",
             "condition": None,
@@ -185,6 +246,21 @@ class OrderFlow:
         self.draft.latitude = self._current_input.get("latitude")
         self.draft.longitude = self._current_input.get("longitude")
 
+    def set_editing(self):
+        self.draft.is_editing = True
+
+    def save_fuel_type_clear_edit(self):
+        self.save_fuel_type()
+        self.draft.is_editing = False
+
+    def save_quantity_clear_edit(self):
+        self.save_quantity()
+        self.draft.is_editing = False
+
+    def save_location_clear_edit(self):
+        self.save_location()
+        self.draft.is_editing = False
+
     def reset_draft(self):
         self.draft = OrderDraft()
 
@@ -201,14 +277,28 @@ class OrderFlow:
         from . import responses
         self._send_message(responses.location_prompt(self.draft.quantity_liters, self.draft.fuel_type))
 
+    def on_awaiting_edit_field(self):
+        from . import responses
+        self._send_message(responses.edit_field_prompt())
+
+    def on_awaiting_fuel_type_edit(self):
+        from . import responses
+        self._send_message(responses.fuel_type_prompt())
+
     def on_awaiting_confirmation(self):
         from . import responses
+        from src.config import get_settings
         address = (
             self.draft.delivery_address
-            or f"{self.draft.latitude:.4f}, {self.draft.longitude:.4f}"
+            or (f"GPS: {self.draft.latitude:.4f}, {self.draft.longitude:.4f}"
+                if self.draft.latitude else "Unknown")
         )
+        settings = get_settings()
+        quoted_price = None
+        if self.draft.quantity_liters and settings.default_price_per_liter:
+            quoted_price = self.draft.quantity_liters * settings.default_price_per_liter
         self._send_message(responses.confirmation_prompt(
-            self.draft.fuel_type, self.draft.quantity_liters, address
+            self.draft.fuel_type, self.draft.quantity_liters, address, quoted_price
         ))
 
     def on_order_placed(self):

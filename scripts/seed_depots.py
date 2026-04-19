@@ -37,6 +37,7 @@ async def seed():
                 location=ST_SetSRID(ST_MakePoint(data["lng"], data["lat"]), 4326),
                 fuel_types_available=data["fuel_types"],
                 is_active=True,
+                price_per_liter=data.get("price_per_liter"),
             ))
             print(f"  added {data['name']} @ ({data['lat']}, {data['lng']})")
 

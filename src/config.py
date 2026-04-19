@@ -61,6 +61,9 @@ class Settings(BaseSettings):
     delivery_proximity_threshold_m: int = 500
     admin_whatsapp_number: str | None = None
 
+    # --- pricing ---
+    default_price_per_liter: float = 15.0  # ZAR, used until per-depot pricing is configured
+
     # --- admin ---
     admin_api_key: str = ""
 
