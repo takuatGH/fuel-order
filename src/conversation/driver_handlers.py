@@ -23,6 +23,12 @@ DRIVER_WINDOW_TTL = 86400  # 24 hours in seconds
 DELIVERY_PROXIMITY_THRESHOLD_M = 500
 
 
+def _mask_phone(phone: str) -> str:
+    if not phone or len(phone) < 6:
+        return "***"
+    return phone[:6] + "*" * (len(phone) - 8) + phone[-2:]
+
+
 class DriverMessageHandler:
 
     def __init__(self, redis_client: redis.Redis, session: AsyncSession, whatsapp: WhatsAppClient):
@@ -302,7 +308,7 @@ async def _send_offer(
     """Send a job offer to a driver. Returns False if the 24h messaging window is closed."""
     window = await redis_client.get(f"driver_window:{driver.phone_number}")
     if not window:
-        logger.warning(f"driver {driver.phone_number} has no open messaging window, skipping offer")
+        logger.warning(f"driver {_mask_phone(driver.phone_number)} has no open messaging window, skipping offer")
         return False
 
     await _set_driver_status(session, driver.id, DriverStatus.PENDING_ACCEPTANCE)

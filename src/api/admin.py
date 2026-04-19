@@ -74,6 +74,17 @@ async def retry_dispatch(
         await order_service.update_status(oid, OrderStatus.CONFIRMED)
         await session.commit()
 
+    # Extract real coordinates from PostGIS geometry
+    from sqlalchemy import text
+    coords = await session.execute(
+        text("SELECT ST_Y(delivery_location::geometry), ST_X(delivery_location::geometry) FROM orders WHERE id = :oid"),
+        {"oid": oid},
+    )
+    row = coords.fetchone()
+    if not row or row[0] is None:
+        raise HTTPException(status_code=422, detail="order has no delivery location stored, cannot dispatch")
+    lat, lng = float(row[0]), float(row[1])
+
     settings = get_settings()
     try:
         from arq import create_pool
@@ -94,15 +105,17 @@ async def retry_dispatch(
             draft={
                 "fuel_type": order.fuel_type.value,
                 "quantity_liters": float(order.quantity_liters),
-                "latitude": None,
-                "longitude": None,
+                "latitude": lat,
+                "longitude": lng,
+                "delivery_address": order.delivery_address,
             },
         )
-        logger.info(f"admin retry-dispatch queued for order {order.order_number}")
+        logger.info(f"admin retry-dispatch queued for order {order.order_number} at ({lat:.4f}, {lng:.4f})")
         return {"status": "queued", "order_number": order.order_number}
     except Exception as e:
         logger.error(f"admin retry-dispatch failed for {order.order_number}: {e}")
         raise HTTPException(status_code=503, detail=f"failed to enqueue: {e}")
+
 
 
 @router.get("/drivers")

@@ -67,6 +67,9 @@ class Settings(BaseSettings):
     # --- admin ---
     admin_api_key: str = ""
 
+    # --- rate limiting ---
+    webhook_rate_limit_per_minute: int = 10  # max messages per phone number per minute
+
     # --- feature flags ---
     enable_signature_verification: bool = True
     enable_iot_endpoints: bool = False

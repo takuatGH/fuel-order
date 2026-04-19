@@ -25,6 +25,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/webhook", tags=["webhook"])
 
 
+def _mask_phone(phone: str) -> str:
+    """Mask middle digits of phone number for logs: 27799626597 → 277996***97"""
+    if not phone or len(phone) < 6:
+        return "***"
+    return phone[:6] + "*" * (len(phone) - 8) + phone[-2:]
+
+
 async def get_redis() -> redis.Redis:
     settings = get_settings()
     client = redis.from_url(settings.redis_url)
@@ -53,6 +60,18 @@ async def get_arq() -> ArqRedis:
         password=parsed.password,
     )
     return await create_pool(rs)
+
+
+async def _check_rate_limit(phone_number: str, redis_client: redis.Redis) -> None:
+    """Reject if phone has sent more than the configured limit this minute."""
+    settings = get_settings()
+    key = f"rate:{phone_number}:{__import__('time').strftime('%Y%m%d%H%M')}"
+    count = await redis_client.incr(key)
+    if count == 1:
+        await redis_client.expire(key, 60)
+    if count > settings.webhook_rate_limit_per_minute:
+        logger.warning(f"rate limit exceeded for {_mask_phone(phone_number)}")
+        raise HTTPException(status_code=429, detail="too many messages")
 
 
 @router.get("")
@@ -105,7 +124,9 @@ async def receive_message(
         logger.info(f"duplicate message {message_id} from {phone_number}, dropping")
         return {"status": "ok"}
 
-    logger.info(f"received message from {phone_number}: {message.get('type')}")
+    await _check_rate_limit(phone_number, redis_client)
+
+    logger.info(f"received message from {_mask_phone(phone_number)}: {message.get('type')}")
 
     identity_service = IdentityService(session)
     driver = await identity_service.get_driver_by_phone(phone_number)
@@ -150,7 +171,7 @@ async def _enqueue_dispatch(
     lat = draft.get("latitude")
     lng = draft.get("longitude")
     if lat is None or lng is None:
-        logger.error(f"order draft missing location for {phone_number}, aborting dispatch")
+        logger.error(f"order draft missing location for {_mask_phone(phone_number)}, aborting dispatch")
         return
 
     identity_service = IdentityService(session)

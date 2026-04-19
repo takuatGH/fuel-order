@@ -153,7 +153,13 @@ class OrderService:
     async def _generate_order_number(self) -> str:
         today = datetime.utcnow().strftime("%Y%m%d")
         prefix = f"FO-{today}-"
-        stmt = select(func.count()).where(Order.order_number.like(f"{prefix}%"))
+        # with_for_update blocks concurrent transactions so they can't both read
+        # count=0 and generate the same order number
+        stmt = (
+            select(func.count())
+            .where(Order.order_number.like(f"{prefix}%"))
+            .with_for_update()
+        )
         result = await self.session.execute(stmt)
         count = result.scalar() or 0
         return f"{prefix}{count + 1:03d}"

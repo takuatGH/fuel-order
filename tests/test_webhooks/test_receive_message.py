@@ -55,6 +55,8 @@ def mock_deps():
     redis_mock.set = AsyncMock(return_value=True)   # idempotency: new message
     redis_mock.get = AsyncMock(return_value=None)
     redis_mock.hgetall = AsyncMock(return_value={})
+    redis_mock.incr = AsyncMock(return_value=1)     # rate limiter: first request
+    redis_mock.expire = AsyncMock(return_value=True)
 
     session_mock = AsyncMock()
     session_mock.add = MagicMock()
@@ -64,6 +66,7 @@ def mock_deps():
     with patch("src.api.webhooks.get_redis", return_value=_async_gen(redis_mock)), \
          patch("src.api.webhooks.get_whatsapp_client", return_value=_async_gen(whatsapp_mock)), \
          patch("src.api.webhooks.get_session", return_value=_async_gen(session_mock)), \
+         patch("src.api.webhooks._check_rate_limit", new=AsyncMock(return_value=None)), \
          patch("src.services.IdentityService.get_driver_by_phone", new=AsyncMock(return_value=None)):
         yield {"redis": redis_mock, "session": session_mock, "whatsapp": whatsapp_mock}
 
@@ -89,7 +92,10 @@ async def test_duplicate_message_id_is_dropped():
     handler_mock = AsyncMock(return_value=HandlerResult(messages=[]))
 
     async def fake_redis():
-        yield AsyncMock()
+        r = AsyncMock()
+        r.incr = AsyncMock(return_value=1)
+        r.expire = AsyncMock(return_value=True)
+        yield r
 
     async def fake_whatsapp():
         yield AsyncMock()
@@ -101,6 +107,7 @@ async def test_duplicate_message_id_is_dropped():
          patch("src.api.webhooks.get_redis", new=fake_redis), \
          patch("src.api.webhooks.get_whatsapp_client", new=fake_whatsapp), \
          patch("src.api.webhooks.get_session", new=fake_session), \
+         patch("src.api.webhooks._check_rate_limit", new=AsyncMock(return_value=None)), \
          patch("src.services.IdentityService.get_driver_by_phone", new=AsyncMock(return_value=None)), \
          patch("src.conversation.MessageHandler.handle", new=handler_mock):
 
@@ -131,6 +138,8 @@ async def test_order_created_enqueues_job_not_direct_dispatch():
     redis_mock.set = AsyncMock(return_value=True)
     redis_mock.get = AsyncMock(return_value=None)
     redis_mock.hgetall = AsyncMock(return_value={})
+    redis_mock.incr = AsyncMock(return_value=1)
+    redis_mock.expire = AsyncMock(return_value=True)
 
     session_mock = AsyncMock()
     session_mock.add = MagicMock()
@@ -148,6 +157,7 @@ async def test_order_created_enqueues_job_not_direct_dispatch():
     with patch("src.api.webhooks.get_redis", return_value=_async_gen(redis_mock)), \
          patch("src.api.webhooks.get_whatsapp_client", return_value=_async_gen(whatsapp_mock)), \
          patch("src.api.webhooks.get_session", return_value=_async_gen(session_mock)), \
+         patch("src.api.webhooks._check_rate_limit", new=AsyncMock(return_value=None)), \
          patch("src.services.IdentityService.get_driver_by_phone", new=AsyncMock(return_value=None)), \
          patch("src.conversation.MessageHandler.handle", new=AsyncMock(return_value=handler_result)), \
          patch("src.services.IdentityService.get_or_create_shop", new=AsyncMock(return_value=MagicMock(id=uuid4()))), \
@@ -182,10 +192,13 @@ async def test_enqueue_failure_does_not_crash_webhook():
     redis_mock.set = AsyncMock(return_value=True)
     redis_mock.get = AsyncMock(return_value=None)
     redis_mock.hgetall = AsyncMock(return_value={})
+    redis_mock.incr = AsyncMock(return_value=1)
+    redis_mock.expire = AsyncMock(return_value=True)
 
     with patch("src.api.webhooks.get_redis", return_value=_async_gen(redis_mock)), \
          patch("src.api.webhooks.get_whatsapp_client", return_value=_async_gen(AsyncMock())), \
          patch("src.api.webhooks.get_session", return_value=_async_gen(AsyncMock())), \
+         patch("src.api.webhooks._check_rate_limit", new=AsyncMock(return_value=None)), \
          patch("src.services.IdentityService.get_driver_by_phone", new=AsyncMock(return_value=None)), \
          patch("src.conversation.MessageHandler.handle", new=AsyncMock(return_value=handler_result)), \
          patch("src.services.IdentityService.get_or_create_shop", new=AsyncMock(return_value=MagicMock(id=uuid4()))), \
@@ -214,12 +227,15 @@ async def test_non_order_message_does_not_enqueue():
     redis_mock.set = AsyncMock(return_value=True)
     redis_mock.get = AsyncMock(return_value=None)
     redis_mock.hgetall = AsyncMock(return_value={})
+    redis_mock.incr = AsyncMock(return_value=1)
+    redis_mock.expire = AsyncMock(return_value=True)
 
     enqueue_mock = AsyncMock()
 
     with patch("src.api.webhooks.get_redis", return_value=_async_gen(redis_mock)), \
          patch("src.api.webhooks.get_whatsapp_client", return_value=_async_gen(AsyncMock())), \
          patch("src.api.webhooks.get_session", return_value=_async_gen(AsyncMock())), \
+         patch("src.api.webhooks._check_rate_limit", new=AsyncMock(return_value=None)), \
          patch("src.services.IdentityService.get_driver_by_phone", new=AsyncMock(return_value=None)), \
          patch("src.conversation.MessageHandler.handle", new=AsyncMock(return_value=handler_result)), \
          patch("src.api.webhooks.get_arq", new=AsyncMock()) as arq_mock:

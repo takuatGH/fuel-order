@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 import httpx
@@ -28,6 +29,8 @@ class GeocodingService:
         return address
 
     async def _fetch(self, lat: float, lng: float) -> str:
+        # Nominatim usage policy: max 1 request/second. Cache hits bypass this.
+        await asyncio.sleep(1)
         try:
             async with httpx.AsyncClient(
                 headers={"User-Agent": "FuelFlow/0.1"},

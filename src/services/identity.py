@@ -59,7 +59,7 @@ class IdentityService:
         # create new shop profile
         shop = ShopProfile(
             phone_number=phone_number,
-            business_name=business_name or f"Shop {phone_number[-4:]}",
+            business_name=business_name or "New Customer",
             verification_status=VerificationStatus.PENDING,
         )
         
